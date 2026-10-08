@@ -21,17 +21,16 @@ export function AnomalyCard({
 
   if (!anomaly) return null;
 
-  const merchant = anomaly.merchant || anomaly.cleanMerchant || anomaly.title || 'Amazon India';
-  const amount = anomaly.amount || 8450;
-  const date = anomaly.date || 'Oct 07, 2026';
-  const category = anomaly.category || 'Shopping';
-  const usualRange = anomaly.normalRange || '₹1,500 – ₹3,000';
-  const multiplier = anomaly.multiplier || '3.1×';
-  const anomalyType = anomaly.type === 'DUPLICATE' ? 'DUPLICATE CHARGE' : 'HIGHER THAN USUAL';
+  const merchant = anomaly.merchant || anomaly.cleanMerchant || anomaly.title || 'Unknown Merchant';
+  const amount = Number(anomaly.amount) || 0;
+  const date = anomaly.date || '';
+  const category = anomaly.category || 'General';
+  const usualRange = anomaly.normalRange || '₹200 – ₹800';
+  const isDuplicate = anomaly.type === 'DUPLICATE_TRANSACTION' || anomaly.type === 'DUPLICATE';
+  const anomalyType = isDuplicate ? 'DUPLICATE CHARGE' : 'UNUSUAL AMOUNT';
   const reasons = anomaly.whyFlagged || [
-    'Amount is 240% above your 60-day median for Shopping',
-    'Transaction posted outside typical recurring spending window',
-    'Unusually high velocity for this merchant'
+    anomaly.reason || 'Flagged by statistical outlier detection engine.',
+    'Amount is outside your historical transaction baseline'
   ];
 
   return (
@@ -62,12 +61,12 @@ export function AnomalyCard({
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.86rem', color: 'var(--text-main)', fontWeight: 600 }}>
             <span>{merchant}</span>
-            <span style={{ color: 'var(--text-muted)' }}>•</span>
-            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{date} · {category}</span>
+            {date && <span style={{ color: 'var(--text-muted)' }}>•</span>}
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{date} {category ? `· ${category}` : ''}</span>
           </div>
         </div>
 
-        {/* Multiplier / Comparison Pill */}
+        {/* Comparison Pill */}
         <div style={{
           background: '#FEF9EE',
           border: '1px solid #FDE68A',
@@ -76,10 +75,10 @@ export function AnomalyCard({
           textAlign: 'right'
         }}>
           <div style={{ fontSize: '0.72rem', color: '#92400E', textTransform: 'uppercase', fontWeight: 700 }}>
-            Your usual: {usualRange}
+            {isDuplicate ? 'Duplicate Notice' : `Normal Range: ${usualRange}`}
           </div>
           <div style={{ fontSize: '0.86rem', color: '#B45309', fontWeight: 700, marginTop: '2px' }}>
-            This transaction is <strong>{multiplier}</strong> higher than usual.
+            {isDuplicate ? 'Identical charge posted < 24h' : 'Outside typical spending baseline'}
           </div>
         </div>
       </div>

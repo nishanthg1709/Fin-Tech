@@ -13,7 +13,8 @@ import { formatINR } from '../utils/formatters.js';
 import { PriceChangeCard, EmptyState } from './common/index.js';
 
 export function PriceChangesView({ 
-  priceChanges = [] 
+  priceChanges = [],
+  onNavigate
 }) {
   const [selectedChange, setSelectedChange] = useState(null);
 
@@ -26,7 +27,7 @@ export function PriceChangesView({
         title="Zero subscription price hikes detected"
         description="All your active recurring services have maintained stable billing amounts without silent rate increases."
         actionText="View Active Subscriptions"
-        onAction={() => window.location.pathname = '/subscriptions'}
+        onAction={() => onNavigate ? onNavigate('/subscriptions') : (window.location.pathname = '/subscriptions')}
       />
     );
   }

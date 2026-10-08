@@ -5,6 +5,7 @@ import {
   UploadCloud, 
   Repeat, 
   TrendingUp, 
+  TrendingDown,
   AlertTriangle, 
   PieChart, 
   Calendar, 
@@ -87,6 +88,12 @@ export function Sidebar({
           id: '/insights',
           label: 'Insights',
           icon: Sparkles
+        },
+        {
+          id: '/savings',
+          label: 'Savings Simulator',
+          icon: TrendingDown,
+          aliases: ['/savings-simulator']
         },
         {
           id: '/unusual-transactions',

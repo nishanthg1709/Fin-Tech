@@ -19,7 +19,9 @@ export function TransactionDrawer({
   transaction,
   isOpen = false,
   onClose,
-  onNavigate
+  onNavigate,
+  isReviewed = false,
+  onToggleReviewed
 }) {
   if (!isOpen || !transaction) return null;
 
@@ -237,9 +239,22 @@ export function TransactionDrawer({
           borderTop: '1px solid var(--border-color)',
           background: '#FAFAF7',
           display: 'flex',
-          justifyContent: 'flex-end'
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px'
         }}>
-          <button onClick={onClose} className="btn btn-primary btn-sm">
+          {onToggleReviewed ? (
+            <button
+              onClick={() => onToggleReviewed(transaction)}
+              className={`btn ${isReviewed ? 'btn-secondary' : 'btn-primary'} btn-sm`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            >
+              <ShieldCheck size={14} color={isReviewed ? 'var(--primary)' : '#FFFFFF'} />
+              <span>{isReviewed ? 'Reviewed ✓' : 'Mark as Reviewed'}</span>
+            </button>
+          ) : <div />}
+
+          <button onClick={onClose} className="btn btn-secondary btn-sm">
             Close
           </button>
         </div>

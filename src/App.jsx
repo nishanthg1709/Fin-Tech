@@ -22,6 +22,7 @@ import { CashFlowView } from './components/CashFlowView.jsx';
 import { TransactionsView } from './components/TransactionsView.jsx';
 import { InsightsView } from './components/InsightsView.jsx';
 import { SettingsView } from './components/SettingsView.jsx';
+import { SavingsSimulatorView } from './components/SavingsSimulatorView.jsx';
 
 export default function App() {
   // Current route based on window.location.pathname
@@ -390,6 +391,7 @@ export default function App() {
           {currentPath === '/price-changes' && (
             <PriceChangesView 
               priceChanges={pipelineData.priceChanges}
+              onNavigate={navigate}
             />
           )}
 
@@ -422,6 +424,9 @@ export default function App() {
             <CashFlowView 
               subscriptions={pipelineData.subscriptions}
               currentBalance={pipelineData.summary.currentBalance}
+              transactions={pipelineData.normalizedTransactions}
+              summary={pipelineData.summary}
+              onNavigate={navigate}
             />
           )}
 
@@ -444,7 +449,16 @@ export default function App() {
             />
           )}
 
-          {/* 10. /settings */}
+          {/* 10. /savings and alias /savings-simulator */}
+          {(currentPath === '/savings' || currentPath === '/savings-simulator') && (
+            <SavingsSimulatorView 
+              subscriptions={pipelineData.subscriptions}
+              transactions={pipelineData.normalizedTransactions}
+              onNavigate={navigate}
+            />
+          )}
+
+          {/* 11. /settings */}
           {currentPath === '/settings' && (
             <SettingsView 
               user={user}

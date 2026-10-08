@@ -29,61 +29,134 @@ export function InsightsView({
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [filterPriority, setFilterPriority] = useState('ALL'); // ALL, POSITIVE, WARNING, OPPORTUNITY, IMPORTANT
 
-  // Structured Insight Feed matching user prompt specification (Section 13)
+  // Dynamically derive data-backed insights from actual transactions and subscriptions
   const insightsList = useMemo(() => {
-    return [
-      {
-        id: 'ins-1',
-        priority: 'warning',
-        category: 'Food & Dining',
-        timestamp: 'Oct 08 · Monthly Trend',
-        whatHappened: 'Food spending increased 18% this month.',
-        whyItMatters: 'Discretionary dining and delivery outlays totaled ₹7,200, exceeding your 60-day historical average by ₹1,100.',
-        recommendedAction: 'Set a weekly dining cap of ₹1,500 for the next 2 weeks to preserve your liquid savings target.',
-        actionText: 'Explore Dining Outflows'
-      },
-      {
-        id: 'ins-2',
-        priority: 'important',
+    const list = [];
+    if (!transactions || transactions.length === 0) return list;
+
+    const debits = transactions.filter(t => t.type === 'DEBIT' || t.type === 'expense' || t.canonical_type === 'expense');
+    const credits = transactions.filter(t => t.type === 'CREDIT' || t.type === 'income' || t.canonical_type === 'income');
+
+    const totalSpending = debits.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const totalIncome = credits.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+    const netCashFlow = totalIncome - totalSpending;
+
+    // 1. Top Spending Category insight
+    const catMap = {};
+    debits.forEach(t => {
+      const cat = t.category || 'Other';
+      if (!catMap[cat]) catMap[cat] = { name: cat, total: 0, count: 0 };
+      catMap[cat].total += (Number(t.amount) || 0);
+      catMap[cat].count += 1;
+    });
+    const categories = Object.values(catMap).sort((a, b) => b.total - a.total);
+    const topCat = categories[0];
+
+    if (topCat && topCat.total > 0 && totalSpending > 0) {
+      const pct = (topCat.total / totalSpending) * 100;
+      list.push({
+        id: 'ins-top-cat',
+        priority: pct > 35 ? 'warning' : 'important',
+        category: topCat.name,
+        timestamp: 'Category Concentration',
+        whatHappened: `Your largest spending category is ${topCat.name} totaling ${formatINR(topCat.total)} (${pct.toFixed(1)}% of spending).`,
+        whyItMatters: `${topCat.name} accounts for ${topCat.count} recorded debit transactions in your statement history.`,
+        recommendedAction: `Inspect your ${topCat.name} transactions to identify discretionary spending optimization opportunities.`,
+        actionText: `Explore ${topCat.name}`
+      });
+    }
+
+    // 2. Recurring Commitment Pressure insight
+    const totalMonthlyRecurring = subscriptions.reduce((sum, s) => sum + (s.normalizedMonthly || s.currentPrice || 0), 0);
+    if (subscriptions.length > 0 && totalSpending > 0) {
+      const recurringPct = Math.min(100, (totalMonthlyRecurring / Math.max(1, totalSpending)) * 100);
+      list.push({
+        id: 'ins-recurring',
+        priority: recurringPct > 30 ? 'warning' : 'opportunity',
         category: 'Subscriptions',
-        timestamp: 'Oct 02 · Price Hike Detected',
-        whatHappened: 'Netflix increased from ₹499 to ₹649 (+30.1%).',
-        whyItMatters: 'Silent recurring rate increase adds approximately ₹1,800 to your annual recurring commitment burn.',
-        recommendedAction: 'Review your streaming tier or rotate between active platforms to eliminate subscription overlap.',
-        actionText: 'Review Price Changes'
-      },
-      {
-        id: 'ins-3',
-        priority: 'warning',
-        category: 'Shopping',
-        timestamp: 'Oct 07 · Spending Velocity',
-        whatHappened: 'You spent ₹3,200 more on shopping this month.',
-        whyItMatters: 'Retail e-commerce orders on Amazon and Myntra accounted for 13.8% of all debit outflows.',
-        recommendedAction: 'Pause non-essential cart purchases until the next billing statement closes.',
-        actionText: 'View Shopping Txns'
-      },
-      {
-        id: 'ins-4',
-        priority: 'opportunity',
-        category: 'Renewals & Cadence',
-        timestamp: 'Oct 08 · Schedule Radar',
-        whatHappened: 'You have 3 subscriptions renewing this week.',
-        whyItMatters: 'Netflix (₹649), Adobe Creative Cloud (₹1,675), and Canva (₹499) will deduct ₹2,823 within the next 8 days.',
-        recommendedAction: 'Verify active mandate authorizations and ensure sufficient balance in your primary HDFC account.',
-        actionText: 'Check Payment Timeline'
-      },
-      {
-        id: 'ins-5',
-        priority: 'positive',
-        category: 'Cash Runway',
-        timestamp: 'Oct 08 · Liquidity Health',
-        whatHappened: 'Your current spending pattern gives you a 47-day cash runway.',
-        whyItMatters: 'Opening balance of ₹78,450 comfortably cushions expected recurring deductions of ₹22,561 with ₹55,889 safe-to-spend buffer.',
-        recommendedAction: 'Maintain current liquidity cushion of at least ₹25,000 to prevent overdraft charges.',
-        actionText: 'Inspect Runway Curve'
+        timestamp: 'Recurring Commitments',
+        whatHappened: `Recurring commitments account for ${recurringPct.toFixed(0)}% of your monthly spending.`,
+        whyItMatters: `${subscriptions.length} active recurring mandates deduct an estimated ${formatINR(totalMonthlyRecurring)} every month.`,
+        recommendedAction: 'Audit your recurring payment list to cancel unused services or rotate subscriptions.',
+        actionText: 'Review Recurring Payments'
+      });
+    }
+
+    // 3. Net Savings & Cash Flow Margin
+    if (totalIncome > 0) {
+      const savingsRate = Math.round(((totalIncome - totalSpending) / totalIncome) * 100);
+      if (netCashFlow >= 0) {
+        list.push({
+          id: 'ins-savings',
+          priority: 'positive',
+          category: 'Savings Margin',
+          timestamp: 'Cash Flow Surplus',
+          whatHappened: `You generated a positive net savings of ${formatINR(netCashFlow)} (${savingsRate}% savings rate).`,
+          whyItMatters: `Total inflow of ${formatINR(totalIncome)} safely exceeded total outflows of ${formatINR(totalSpending)}.`,
+          recommendedAction: 'Maintain current spending habits and transfer surplus to liquid high-yield emergency reserves.',
+          actionText: 'Inspect Cash Flow'
+        });
+      } else {
+        list.push({
+          id: 'ins-deficit',
+          priority: 'warning',
+          category: 'Cash Flow',
+          timestamp: 'Cash Flow Deficit',
+          whatHappened: `Outflows exceeded income by ${formatINR(Math.abs(netCashFlow))} across the recorded period.`,
+          whyItMatters: `Total debit spending reached ${formatINR(totalSpending)} against ${formatINR(totalIncome)} in total deposits.`,
+          recommendedAction: 'Trim discretionary purchases or non-essential shopping to restore positive cash flow.',
+          actionText: 'Inspect Outflows'
+        });
       }
-    ];
-  }, []);
+    }
+
+    // 4. Detected Price Increase
+    if (priceChanges && priceChanges.length > 0) {
+      const pc = priceChanges[0];
+      const diff = pc.newPrice - pc.oldPrice;
+      const annualImpact = pc.annualImpact || (diff * 12);
+      list.push({
+        id: 'ins-price-hike',
+        priority: 'important',
+        category: 'Price Hikes',
+        timestamp: 'Subscription Rate Increase',
+        whatHappened: `${pc.merchantName} increased from ${formatINR(pc.oldPrice)} to ${formatINR(pc.newPrice)} (+${pc.percentIncrease || pc.percentageChange || 0}%).`,
+        whyItMatters: `This silent recurring hike adds approximately ${formatINR(annualImpact)}/yr to your recurring commitment burn.`,
+        recommendedAction: 'Review plan tiers or assess whether alternative plans offer better pricing.',
+        actionText: 'Review Price Changes'
+      });
+    }
+
+    // 5. Active Unusual Transactions Alert
+    if (anomalies && anomalies.length > 0) {
+      list.push({
+        id: 'ins-anomalies',
+        priority: 'warning',
+        category: 'Outlier Detection',
+        timestamp: 'Audit Required',
+        whatHappened: `${anomalies.length} unusual transaction alert${anomalies.length > 1 ? 's' : ''} require review.`,
+        whyItMatters: 'Outlier transaction amounts or potential duplicate charges were detected in your statement.',
+        recommendedAction: 'Examine flagged records in the Unusual Transactions investigator to confirm or dismiss them.',
+        actionText: 'Review Flagged Outliers'
+      });
+    }
+
+    // 6. Liquidity & Runway buffer
+    const dailyAvg = totalSpending / Math.max(1, 30);
+    const runwayDays = Math.min(365, Math.max(1, Math.round(currentBalance / Math.max(1, dailyAvg))));
+    list.push({
+      id: 'ins-runway',
+      priority: runwayDays >= 60 ? 'positive' : 'opportunity',
+      category: 'Liquidity',
+      timestamp: 'Financial Cushion',
+      whatHappened: `Your current spending pattern provides an estimated ${runwayDays}-day cash runway.`,
+      whyItMatters: `Available balance of ${formatINR(currentBalance)} cushions upcoming commitments with a liquid spending buffer.`,
+      recommendedAction: 'Maintain an emergency reserve covering at least 60 days of essential household expenses.',
+      actionText: 'Inspect Runway Curve'
+    });
+
+    return list;
+  }, [transactions, subscriptions, priceChanges, anomalies, currentBalance]);
 
   const filteredInsights = useMemo(() => {
     if (filterPriority === 'ALL') return insightsList;
@@ -139,11 +212,24 @@ Primary Account Holder`;
 
   const handleInsightAction = (insight) => {
     if (!onNavigate) return;
-    if (insight.category === 'Subscriptions' || insight.category === 'Renewals & Cadence') onNavigate('/subscriptions');
-    else if (insight.category === 'Cash Runway') onNavigate('/cash-flow');
-    else if (insight.category === 'Food & Dining' || insight.category === 'Shopping') onNavigate('/spending');
-    else onNavigate('/transactions');
+    if (insight.category === 'Subscriptions') onNavigate('/subscriptions');
+    else if (insight.category === 'Liquidity' || insight.category === 'Savings Margin' || insight.category === 'Cash Flow') onNavigate('/cash-flow');
+    else if (insight.category === 'Price Hikes') onNavigate('/price-changes');
+    else if (insight.category === 'Outlier Detection') onNavigate('/unusual-transactions');
+    else onNavigate('/spending');
   };
+
+  if (!transactions || transactions.length === 0) {
+    return (
+      <EmptyState
+        icon={Sparkles}
+        title="No transaction insights available"
+        description="Upload a bank statement CSV to generate data-backed insights on spending concentration, savings margins, and recurring commitments."
+        actionText="Upload Statement CSV"
+        onAction={() => onNavigate ? onNavigate('/upload-transactions') : (window.location.pathname = '/upload-transactions')}
+      />
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '26px' }}>
@@ -227,13 +313,19 @@ Primary Account Holder`;
 
       {/* 1. STRUCTURED INSIGHT FEED (Section 13) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {filteredInsights.map(insight => (
-          <InsightCard
-            key={insight.id}
-            insight={insight}
-            onAction={handleInsightAction}
-          />
-        ))}
+        {filteredInsights.length > 0 ? (
+          filteredInsights.map(insight => (
+            <InsightCard
+              key={insight.id}
+              insight={insight}
+              onAction={handleInsightAction}
+            />
+          ))
+        ) : (
+          <div style={{ padding: '36px', background: '#FAFAF7', border: '1px solid var(--border-color)', borderRadius: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+            No financial observations found for the selected filter.
+          </div>
+        )}
       </div>
 
       {/* 2. SAVINGS OPPORTUNITIES & INTERACTIVE CANCELLATION SIMULATOR */}

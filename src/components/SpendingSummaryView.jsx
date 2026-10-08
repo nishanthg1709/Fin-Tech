@@ -30,21 +30,50 @@ export function SpendingSummaryView({
   reviewedAnomalyIds = [], 
   onNavigate 
 }) {
+  const [selectedPeriod, setSelectedPeriod] = useState('ALL'); // 'ALL' | 'THIS_MONTH' | 'LAST_MONTH' | 'LAST_3_MONTHS'
   const [toastMessage, setToastMessage] = useState(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const toastTimeoutRef = useRef(null);
 
+  const now = useMemo(() => new Date(), []);
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
+  // Filter transactions by selected period
+  const activeTransactions = useMemo(() => {
+    if (selectedPeriod === 'ALL') return transactions;
+    return transactions.filter(t => {
+      if (!t.date) return false;
+      const d = new Date(t.date);
+      if (isNaN(d.getTime())) return false;
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      if (selectedPeriod === 'THIS_MONTH') return y === currentYear && m === currentMonth;
+      if (selectedPeriod === 'LAST_MONTH') {
+        const targetM = currentMonth === 0 ? 11 : currentMonth - 1;
+        const targetY = currentMonth === 0 ? currentYear - 1 : currentYear;
+        return y === targetY && m === targetM;
+      }
+      if (selectedPeriod === 'LAST_3_MONTHS') {
+        const diff = (currentYear - y) * 12 + (currentMonth - m);
+        return diff >= 0 && diff < 3;
+      }
+      return true;
+    });
+  }, [transactions, selectedPeriod, currentYear, currentMonth]);
+
   // Compute all metrics from actual transaction data
   const summaryData = useMemo(() => {
-    if (!transactions || transactions.length === 0) {
+    const txSource = activeTransactions.length > 0 ? activeTransactions : transactions;
+    if (!txSource || txSource.length === 0) {
       return null;
     }
 
     const isCredit = (t) => t.type === 'CREDIT' || t.type === 'income' || t.canonical_type === 'income';
     const isDebit = (t) => (t.type === 'DEBIT' || t.type === 'expense' || t.canonical_type === 'expense' || (t.type !== 'CREDIT' && t.type !== 'income' && t.type !== 'transfer')) && t.type !== 'transfer';
 
-    const debits = transactions.filter(t => isDebit(t) && t.amount > 0);
-    const credits = transactions.filter(t => isCredit(t) && t.amount > 0);
+    const debits = txSource.filter(t => isDebit(t) && t.amount > 0);
+    const credits = txSource.filter(t => isCredit(t) && t.amount > 0);
 
     const totalSpending = debits.reduce((sum, t) => sum + t.amount, 0);
     const totalIncome = credits.reduce((sum, t) => sum + t.amount, 0);
@@ -114,6 +143,24 @@ export function SpendingSummaryView({
     // Top 5 largest individual expenses
     const topTransactions = [...debits].sort((a, b) => b.amount - a.amount).slice(0, 5);
 
+    // Top merchants breakdown
+    const merchantMap = {};
+    debits.forEach(t => {
+      const m = t.cleanMerchant || t.merchant || 'Other Merchant';
+      if (!merchantMap[m]) {
+        merchantMap[m] = { name: m, total: 0, count: 0, category: t.category || 'General' };
+      }
+      merchantMap[m].total += t.amount;
+      merchantMap[m].count += 1;
+    });
+    const topMerchants = Object.values(merchantMap)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5)
+      .map(m => ({
+        ...m,
+        percentage: totalSpending > 0 ? (m.total / totalSpending) * 100 : 0
+      }));
+
     // Key financial insights
     const insights = [];
     if (totalIncome > 0) {
@@ -156,9 +203,10 @@ export function SpendingSummaryView({
         pendingAlerts
       },
       topTransactions,
+      topMerchants,
       insights
     };
-  }, [transactions, subscriptions, allAnomalies, reviewedAnomalyIds]);
+  }, [activeTransactions, transactions, subscriptions, allAnomalies, reviewedAnomalyIds]);
 
   const triggerToast = (msg) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -239,16 +287,36 @@ export function SpendingSummaryView({
             </div>
           </div>
 
-          <button 
-            onClick={handleDownloadReport}
-            disabled={isGeneratingPdf}
-            className="btn btn-primary btn-lg"
-            style={{ boxShadow: '0 4px 14px rgba(24, 118, 90, 0.25)' }}
-            id="download-spending-report-btn"
-          >
-            <Download size={17} />
-            <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download Report (PDF)'}</span>
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#FAFAF7', padding: '4px', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+              {[
+                { id: 'ALL', label: 'All Period' },
+                { id: 'THIS_MONTH', label: 'This Month' },
+                { id: 'LAST_MONTH', label: 'Last Month' },
+                { id: 'LAST_3_MONTHS', label: 'Last 3 Months' }
+              ].map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => setSelectedPeriod(p.id)}
+                  className={`btn btn-sm ${selectedPeriod === p.id ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.74rem', padding: '5px 10px', border: selectedPeriod === p.id ? 'none' : 'transparent' }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <button 
+              onClick={handleDownloadReport}
+              disabled={isGeneratingPdf}
+              className="btn btn-primary btn-lg"
+              style={{ boxShadow: '0 4px 14px rgba(24, 118, 90, 0.25)' }}
+              id="download-spending-report-btn"
+            >
+              <Download size={17} />
+              <span>{isGeneratingPdf ? 'Generating PDF...' : 'Download Report (PDF)'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -669,6 +737,63 @@ export function SpendingSummaryView({
             ))}
           </div>
         </div>
+
+        {/* TOP MERCHANTS OUTFLOW */}
+        {summaryData.topMerchants && summaryData.topMerchants.length > 0 && (
+          <div className="glass-panel" style={{ padding: '24px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div className="icon-box-mint">
+                  <CreditCard size={18} color="var(--primary)" />
+                </div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.02em' }}>
+                  Top Spending Merchants
+                </h3>
+              </div>
+              <span className="badge badge-emerald">
+                {summaryData.topMerchants.length} Key Payees
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {summaryData.topMerchants.map((m, idx) => (
+                <div 
+                  key={idx}
+                  style={{
+                    background: '#FAFAF7',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '10px',
+                    padding: '12px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="icon-box-mint" style={{ width: '28px', height: '28px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: 700 }}>
+                      {m.name.charAt(0)}
+                    </div>
+                    <div>
+                      <strong style={{ fontSize: '0.88rem', color: 'var(--text-main)', display: 'block' }}>{m.name}</strong>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                        {m.count} tx • {m.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.94rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                      {formatINR(m.total)}
+                    </div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 600 }}>
+                      {m.percentage.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
       </div>
 
