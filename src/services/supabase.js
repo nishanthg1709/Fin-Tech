@@ -1,69 +1,339 @@
-/**
- * Supabase Transactions Data Access Layer
- * Integrates canonical transaction persistence with Supabase while maintaining
- * seamless local client persistence and offline compatibility.
- *
- * CANONICAL SCHEMA:
- * - id: string (primary key)
- * - user_id: string|null
- * - date: string (YYYY-MM-DD)
- * - original_description: string
- * - merchant: string
- * - amount: number (positive)
- * - type: string ("income" | "expense" | "transfer")
- * - category: string
- * - balance: number|null
- * - account: string|null
- * - source: string ("csv")
- * - is_reviewed: boolean
- * - created_at: string (ISO timestamp)
- */
+import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL || null) : null;
-const SUPABASE_ANON_KEY = typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_ANON_KEY || null) : null;
+// Supabase environment variables from Vite configuration (.env)
+const SUPABASE_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL
+  ? import.meta.env.VITE_SUPABASE_URL
+  : (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_URL || null : null);
+
+const SUPABASE_ANON_KEY = typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY
+  ? import.meta.env.VITE_SUPABASE_ANON_KEY
+  : (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_ANON_KEY || null : null);
+
+// Initialize single canonical Supabase Client
+export const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storageKey: 'smart_expense_supabase_auth_token'
+      }
+    })
+  : null;
 
 const LOCAL_STORAGE_KEY = 'smart_expense_active_transactions';
 
-export const supabaseService = {
+/**
+ * Maps raw auth and database errors to clean, user-facing error messages.
+ * Prevents exposing internal tokens or raw database stack traces.
+ */
+export function mapAuthError(err, mode = 'login') {
+  if (!err) {
+    return mode === 'login' ? 'Invalid email or password' : 'Unable to create account. Please try again.';
+  }
+
+  const msg = (err.message || String(err)).toLowerCase();
+
+  if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('connection refused') || msg.includes('timeout')) {
+    return 'Unable to connect to the server.';
+  }
+  if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('duplicate')) {
+    return 'An account with this email already exists';
+  }
+  if (msg.includes('invalid login credentials') || msg.includes('invalid_credentials') || msg.includes('invalid credentials')) {
+    return 'Invalid email or password';
+  }
+  if (msg.includes('password should be at least') || msg.includes('weak password') || msg.includes('password must be')) {
+    return 'Password must be at least 6 characters.';
+  }
+  if (msg.includes('email not confirmed') || msg.includes('not verified')) {
+    return 'Please verify your email address before logging in.';
+  }
+  if (msg.includes('rate limit') || msg.includes('security purposes')) {
+    return 'Too many attempts. Please wait a moment and try again.';
+  }
+  if (msg.includes('invalid format') || msg.includes('invalid email') || msg.includes('valid email')) {
+    return 'Please enter a valid email address.';
+  }
+
+  return mode === 'login'
+    ? 'Invalid email or password'
+    : 'Unable to create account. Please try again.';
+}
+
+/**
+ * Reusable Profile Service
+ * Manages user profile data and synchronization with the Supabase `profiles` table.
+ */
+export const profileService = {
   /**
-   * Checks if Supabase connection is configured.
+   * Retrieves current authenticated user.
    */
+  async getCurrentUser() {
+    if (!supabase) return null;
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data?.user) return null;
+      return data.user;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Retrieves current authenticated session.
+   */
+  async getCurrentSession() {
+    if (!supabase) return null;
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data?.session) return null;
+      return data.session;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Fetches profile from `profiles` table, falling back to auth metadata if unavailable.
+   */
+  async getProfile(userId) {
+    if (!supabase || !userId) return null;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!error && data) {
+        return data;
+      }
+    } catch (err) {
+      console.warn('Profile fetch note:', err?.message);
+    }
+    return null;
+  },
+
+  /**
+   * Creates or ensures profile row in `profiles` table.
+   */
+  async createProfile({ userId, fullName, email }) {
+    if (!userId) return null;
+    const profilePayload = {
+      user_id: userId,
+      full_name: fullName || '',
+      email: email || '',
+      updated_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .upsert([profilePayload], { onConflict: 'user_id' })
+          .select()
+          .maybeSingle();
+
+        if (!error && data) {
+          return data;
+        }
+        if (error) {
+          console.warn('Profile persistence notice:', error.message);
+        }
+      } catch (err) {
+        console.warn('Profile insert note:', err?.message);
+      }
+    }
+
+    return profilePayload;
+  },
+
+  /**
+   * Updates existing profile record.
+   */
+  async updateProfile(userId, updates) {
+    if (!userId || !updates) return null;
+    const payload = {
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .update(payload)
+          .eq('user_id', userId)
+          .select()
+          .maybeSingle();
+
+        if (!error && data) {
+          return data;
+        }
+      } catch (err) {
+        console.warn('Profile update error:', err?.message);
+      }
+    }
+
+    return { user_id: userId, ...payload };
+  }
+};
+
+/**
+ * Reusable Supabase Auth Service
+ * Coordinates signUp, signIn, signOut, and real-time session subscription.
+ */
+export const authService = {
+  isConfigured() {
+    return Boolean(supabase);
+  },
+
+  /**
+   * Registers a new user with Supabase Auth.
+   * On success, creates user's profile in the `profiles` table.
+   */
+  async signUp({ email, password, fullName }) {
+    if (!email || !password) {
+      return { success: false, error: 'Please enter your email and password.' };
+    }
+    if (password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
+    if (!supabase) {
+      return { success: false, error: 'Unable to connect to the server.' };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName?.trim() || ''
+          }
+        }
+      });
+
+      if (error) {
+        return { success: false, error: mapAuthError(error, 'signup') };
+      }
+
+      // Check for existing user where Supabase returned empty identities array
+      if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        return { success: false, error: 'An account with this email already exists' };
+      }
+
+      // Create profile record for the authenticated user
+      let profile = null;
+      if (data?.user) {
+        profile = await profileService.createProfile({
+          userId: data.user.id,
+          fullName: fullName?.trim() || '',
+          email: data.user.email
+        });
+      }
+
+      return {
+        success: true,
+        user: data.user,
+        session: data.session,
+        profile
+      };
+    } catch (err) {
+      return { success: false, error: mapAuthError(err, 'signup') };
+    }
+  },
+
+  /**
+   * Authenticates user credentials via Supabase Auth.
+   * Loads user profile upon successful authentication.
+   */
+  async signIn({ email, password }) {
+    if (!email || !password) {
+      return { success: false, error: 'Please enter your email and password.' };
+    }
+
+    if (!supabase) {
+      return { success: false, error: 'Unable to connect to the server.' };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
+
+      if (error) {
+        return { success: false, error: mapAuthError(error, 'login') };
+      }
+
+      let profile = null;
+      if (data?.user) {
+        profile = await profileService.getProfile(data.user.id);
+      }
+
+      return {
+        success: true,
+        user: data.user,
+        session: data.session,
+        profile
+      };
+    } catch (err) {
+      return { success: false, error: mapAuthError(err, 'login') };
+    }
+  },
+
+  /**
+   * Signs out current user from Supabase.
+   */
+  async signOut() {
+    if (!supabase) return { success: true };
+    try {
+      await supabase.auth.signOut();
+      return { success: true };
+    } catch (err) {
+      console.warn('SignOut note:', err?.message);
+      return { success: true };
+    }
+  },
+
+  /**
+   * Subscribes to auth state changes (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED).
+   */
+  onAuthStateChange(callback) {
+    if (!supabase) {
+      return { data: { subscription: { unsubscribe: () => {} } } };
+    }
+    return supabase.auth.onAuthStateChange(callback);
+  }
+};
+
+/**
+ * Existing Transactions Data Access Layer (Preserved for backward compatibility)
+ */
+export const supabaseService = {
   isConfigured() {
     return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
   },
 
-  /**
-   * Retrieves transactions for a user.
-   * Reads from Supabase if configured, falling back to local source of truth.
-   * @param {string} [userId=null]
-   * @returns {Promise<Array>}
-   */
   async getTransactions(userId = null) {
-    if (this.isConfigured()) {
+    if (this.isConfigured() && supabase) {
       try {
-        const query = userId 
-          ? `${SUPABASE_URL}/rest/v1/transactions?user_id=eq.${encodeURIComponent(userId)}&order=date.desc`
-          : `${SUPABASE_URL}/rest/v1/transactions?order=date.desc`;
-
-        const res = await fetch(query, {
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          }
-        });
-
-        if (res.ok) {
-          const remoteData = await res.json();
-          if (Array.isArray(remoteData) && remoteData.length > 0) {
-            return remoteData;
-          }
+        let query = supabase.from('transactions').select('*').order('transaction_date', { ascending: false });
+        if (userId) {
+          query = query.eq('user_id', userId);
+        }
+        const { data, error } = await query;
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data;
         }
       } catch (err) {
         console.warn('Supabase fetch failed, falling back to local source:', err);
       }
     }
 
-    // Local source of truth
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (stored) {
@@ -75,20 +345,11 @@ export const supabaseService = {
     return [];
   },
 
-  /**
-   * Inserts or upserts canonical transactions into the database.
-   * Updates both remote Supabase and local source of truth.
-   *
-   * @param {Array} transactions Array of canonical transactions
-   * @param {string} [userId=null]
-   * @returns {Promise<{ success: boolean, count: number, error?: string }>}
-   */
   async insertTransactions(transactions = [], userId = null) {
     if (!Array.isArray(transactions) || transactions.length === 0) {
       return { success: true, count: 0 };
     }
 
-    // Format clean canonical payload
     const records = transactions.map(tx => ({
       id: tx.id,
       user_id: userId || tx.user_id || null,
@@ -105,21 +366,11 @@ export const supabaseService = {
       created_at: tx.created_at || new Date().toISOString()
     }));
 
-    // 1. Persist to Supabase if available
     let remoteSaved = false;
-    if (this.isConfigured()) {
+    if (this.isConfigured() && supabase) {
       try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/transactions`, {
-          method: 'POST',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify(records)
-        });
-        if (res.ok) {
+        const { error } = await supabase.from('transactions').upsert(records);
+        if (!error) {
           remoteSaved = true;
         }
       } catch (err) {
@@ -127,7 +378,6 @@ export const supabaseService = {
       }
     }
 
-    // 2. Always persist to local source of truth
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(transactions));
     } catch (e) {
@@ -141,24 +391,22 @@ export const supabaseService = {
     };
   },
 
-  /**
-   * Clears transactions from local storage and database.
-   */
   async clearTransactions(userId = null) {
     try {
       localStorage.removeItem(LOCAL_STORAGE_KEY);
     } catch {}
 
-    if (this.isConfigured() && userId) {
+    if (this.isConfigured() && userId && supabase) {
       try {
-        await fetch(`${SUPABASE_URL}/rest/v1/transactions?user_id=eq.${encodeURIComponent(userId)}`, {
-          method: 'DELETE',
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          }
-        });
+        await supabase.from('transactions').delete().eq('user_id', userId);
       } catch {}
     }
   }
 };
+
+// Re-export csvPersistenceService from canonical supabase module
+export { 
+  csvPersistenceService, 
+  generateTransactionFingerprint, 
+  formatTransactionRecord 
+} from './csvPersistenceService.js';

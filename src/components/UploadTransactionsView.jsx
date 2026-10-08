@@ -30,10 +30,11 @@ import {
   executeNormalizationPipeline,
   CANONICAL_FIELD_ALIASES 
 } from '../services/engine/normalization/index.js';
-import { supabaseService } from '../services/supabase.js';
+import { supabaseService, csvPersistenceService } from '../services/supabase.js';
 import { generateSampleCSVString } from '../services/engine/statementParser.js';
 
 export function UploadTransactionsView({ 
+  user,
   activeSourceInfo, 
   onAnalyzeTransactions, 
   onNavigate 
@@ -294,19 +295,32 @@ export function UploadTransactionsView({
         clearInterval(interval);
 
         // Section 14: Save normalized transactions to Supabase & local source of truth
+        let persistResult = null;
         try {
-          await supabaseService.insertTransactions(parsedData.readyTransactions);
+          persistResult = await csvPersistenceService.persistTransactions(
+            parsedData.readyTransactions,
+            {
+              userId: user?.id,
+              fileName: parsedData.metadata?.fileName,
+              latestBalance: parsedData.metadata?.latestBalance
+            }
+          );
         } catch (dbErr) {
-          console.warn('Database sync notification:', dbErr);
+          console.warn('Database persistence notice:', dbErr);
         }
 
-        saveToHistory(parsedData.metadata);
+        const enrichedMetadata = {
+          ...parsedData.metadata,
+          importSummary: persistResult
+        };
+
+        saveToHistory(enrichedMetadata);
         setIsImportCompleted(true);
         setImportProgress(null);
 
         // Refresh entire application with normalized transactions
         if (onAnalyzeTransactions) {
-          onAnalyzeTransactions(parsedData.readyTransactions, parsedData.metadata);
+          onAnalyzeTransactions(parsedData.readyTransactions, enrichedMetadata);
         }
       }
     }, 280);

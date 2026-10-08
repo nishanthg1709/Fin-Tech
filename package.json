@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node test_supabase_schema.js && node test_supabase_auth.js && node test_csv_persistence.js && node test_phase2c_e2e_verification.js && node test_frontend_mvp_complete.js",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
     "canvas-confetti": "^1.9.4",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",

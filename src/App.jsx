@@ -23,6 +23,7 @@ import { TransactionsView } from './components/TransactionsView.jsx';
 import { InsightsView } from './components/InsightsView.jsx';
 import { SettingsView } from './components/SettingsView.jsx';
 import { SavingsSimulatorView } from './components/SavingsSimulatorView.jsx';
+import { authService, profileService, csvPersistenceService } from './services/supabase.js';
 
 export default function App() {
   // Current route based on window.location.pathname
@@ -145,11 +146,23 @@ export default function App() {
   };
 
   // Analyze transactions handler
-  const handleAnalyzeTransactions = (transactions, metadata) => {
-    setRawTransactions(transactions);
+  const handleAnalyzeTransactions = async (transactions, metadata) => {
+    let activeTxs = transactions;
+    if (user?.id) {
+      try {
+        const remoteTxs = await csvPersistenceService.fetchUserTransactions(user.id);
+        if (Array.isArray(remoteTxs) && remoteTxs.length > 0) {
+          activeTxs = remoteTxs;
+        }
+      } catch (err) {
+        console.warn('Could not refresh transactions from Supabase:', err);
+      }
+    }
+
+    setRawTransactions(activeTxs);
     setActiveSourceInfo(metadata);
     try {
-      localStorage.setItem('smart_expense_active_transactions', JSON.stringify(transactions));
+      localStorage.setItem('smart_expense_active_transactions', JSON.stringify(activeTxs));
       localStorage.setItem('smart_expense_active_source', JSON.stringify(metadata));
       localStorage.removeItem('smart_expense_reviewed_anomalies');
     } catch (e) {
@@ -158,7 +171,7 @@ export default function App() {
     setReviewedAnomalyIds([]);
 
     // Success notification toast: "{N} transactions analyzed successfully."
-    setGlobalToast(`${transactions.length} transactions analyzed successfully.`);
+    setGlobalToast(`${activeTxs.length} transactions analyzed successfully.`);
     setTimeout(() => {
       setGlobalToast(null);
     }, 4500);
@@ -193,7 +206,83 @@ export default function App() {
     return (pipelineData?.anomalies || []).filter(a => !reviewedAnomalyIds.includes(a.id));
   }, [pipelineData?.anomalies, reviewedAnomalyIds]);
 
-  // Protected Routes Check:
+  // Session Persistence & Synchronization with Supabase Auth
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncSession = async () => {
+      try {
+        const session = await profileService.getCurrentSession();
+        if (session?.user && isMounted) {
+          const profile = await profileService.getProfile(session.user.id);
+          const activeUser = {
+            id: session.user.id,
+            name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+            email: session.user.email,
+            bankConnected: true
+          };
+          setUser(activeUser);
+          try {
+            localStorage.setItem('smart_expense_user', JSON.stringify(activeUser));
+          } catch {}
+
+          // Refresh remote transactions from Supabase
+          const remoteTxs = await csvPersistenceService.fetchUserTransactions(session.user.id);
+          if (Array.isArray(remoteTxs) && remoteTxs.length > 0 && isMounted) {
+            setRawTransactions(remoteTxs);
+            try {
+              localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
+            } catch {}
+          }
+        }
+      } catch (err) {
+        console.warn('Session initialization note:', err);
+      }
+    };
+
+    syncSession();
+
+    const authListener = authService.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
+      if (event === 'SIGNED_IN' && session?.user) {
+        const profile = await profileService.getProfile(session.user.id);
+        const activeUser = {
+          id: session.user.id,
+          name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+          email: session.user.email,
+          bankConnected: true
+        };
+        setUser(activeUser);
+        try {
+          localStorage.setItem('smart_expense_user', JSON.stringify(activeUser));
+        } catch {}
+
+        const remoteTxs = await csvPersistenceService.fetchUserTransactions(session.user.id);
+        if (Array.isArray(remoteTxs) && remoteTxs.length > 0 && isMounted) {
+          setRawTransactions(remoteTxs);
+          try {
+            localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
+          } catch {}
+        }
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setRawTransactions([]);
+        try {
+          localStorage.removeItem('smart_expense_user');
+          localStorage.removeItem('smart_expense_active_transactions');
+        } catch {}
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (authListener?.data?.subscription?.unsubscribe) {
+        authListener.data.subscription.unsubscribe();
+      }
+    };
+  }, []);
+
+  // Protected Routes Check (Requiring active authenticated session)
   useEffect(() => {
     const publicRoutes = ['/', '/login', '/signup'];
     if (!user && !publicRoutes.includes(currentPath)) {
@@ -201,31 +290,63 @@ export default function App() {
     }
   }, [user, currentPath]);
 
-  // Auth Handlers
-  const handleLogin = (credentials) => {
-    const existing = user || {};
-    const loggedUser = {
-      name: existing.name || credentials.email.split('@')[0],
+  // Real Supabase Auth Handlers
+  const handleLogin = async (credentials) => {
+    const result = await authService.signIn({
       email: credentials.email,
-      bankConnected: existing.bankConnected ?? true
+      password: credentials.password
+    });
+
+    if (!result.success) {
+      return { error: result.error };
+    }
+
+    const authUser = result.user;
+    const profile = result.profile;
+    const loggedUser = {
+      id: authUser?.id,
+      name: profile?.full_name || authUser?.user_metadata?.full_name || credentials.email.split('@')[0],
+      email: authUser?.email || credentials.email,
+      bankConnected: true
     };
+
     setUser(loggedUser);
-    localStorage.setItem('smart_expense_user', JSON.stringify(loggedUser));
+    try {
+      localStorage.setItem('smart_expense_user', JSON.stringify(loggedUser));
+    } catch {}
     navigate('/overview');
+    return { success: true };
   };
 
-  const handleSignup = (userData) => {
+  const handleSignup = async (userData) => {
+    const result = await authService.signUp({
+      email: userData.email,
+      password: userData.password,
+      fullName: userData.name
+    });
+
+    if (!result.success) {
+      return { error: result.error };
+    }
+
+    const authUser = result.user;
     const newUser = {
+      id: authUser?.id || null,
       name: userData.name,
       email: userData.email,
       bankConnected: false
     };
+
     setUser(newUser);
-    localStorage.setItem('smart_expense_user', JSON.stringify(newUser));
+    try {
+      localStorage.setItem('smart_expense_user', JSON.stringify(newUser));
+    } catch {}
     navigate('/onboarding');
+    return { success: true };
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await authService.signOut();
     localStorage.removeItem('smart_expense_user');
     localStorage.removeItem('smart_expense_reviewed_anomalies');
     localStorage.removeItem('smart_expense_active_transactions');
@@ -365,6 +486,7 @@ export default function App() {
           {/* 2. /upload-transactions (and alias /upload) */}
           {(currentPath === '/upload-transactions' || currentPath === '/upload') && (
             <UploadTransactionsView 
+              user={user}
               activeSourceInfo={activeSourceInfo}
               onAnalyzeTransactions={handleAnalyzeTransactions}
               onNavigate={navigate}

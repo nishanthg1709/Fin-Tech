@@ -10,7 +10,7 @@ export function SignupView({ onSignup, onNavigate }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Please enter your full name.');
@@ -20,8 +20,8 @@ export function SignupView({ onSignup, onNavigate }) {
       setError('Please enter your email.');
       return;
     }
-    if (password.length < 4) {
-      setError('Password must be at least 4 characters.');
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
       return;
     }
     if (password !== confirmPassword) {
@@ -30,14 +30,21 @@ export function SignupView({ onSignup, onNavigate }) {
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onSignup({
+    setError('');
+    try {
+      const res = await onSignup({
         name: name.trim(),
         email: email.trim(),
         password
       });
-    }, 350);
+      if (res && res.error) {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError(err?.message || 'Unable to create account. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

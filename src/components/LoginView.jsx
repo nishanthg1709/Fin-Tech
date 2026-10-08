@@ -8,18 +8,25 @@ export function LoginView({ onLogin, onNavigate }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!email.trim() || !password) {
       setError('Please enter your email and password.');
       return;
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
+    setError('');
+    try {
+      const res = await onLogin({ email: email.trim(), password });
+      if (res && res.error) {
+        setError(res.error);
+      }
+    } catch (err) {
+      setError(err?.message || 'Unable to connect to the server.');
+    } finally {
       setIsSubmitting(false);
-      onLogin({ email, password });
-    }, 350);
+    }
   };
 
   return (
