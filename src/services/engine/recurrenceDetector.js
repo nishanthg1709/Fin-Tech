@@ -218,8 +218,8 @@ export function detectRecurringExpenses(normalizedTransactions, userOverrides = 
     } catch {}
   }
 
-  // Only evaluate debits / expenses
-  const debits = normalizedTransactions.filter(tx => tx.amount > 0 && tx.type !== 'CREDIT');
+  // Only evaluate debits / expenses (excluding income, credits, and transfers)
+  const debits = normalizedTransactions.filter(tx => tx.amount > 0 && tx.type !== 'CREDIT' && tx.type !== 'income' && tx.type !== 'transfer');
   if (debits.length === 0) {
     const emptyArr = [];
     emptyArr.unconfirmedRepeated = [];

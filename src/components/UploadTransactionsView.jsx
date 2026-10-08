@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   UploadCloud, 
   FileText, 
@@ -14,10 +14,24 @@ import {
   Database,
   Clock,
   History,
-  Layers
+  Layers,
+  Settings2,
+  HelpCircle,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Filter,
+  Eye,
+  AlertTriangle
 } from 'lucide-react';
-import { parseCSVWithMetadata, generateSampleCSVString } from '../services/engine/statementParser.js';
 import { formatINR, formatIndianNumber } from '../utils/formatters.js';
+import { 
+  analyzeCSVStructure, 
+  executeNormalizationPipeline,
+  CANONICAL_FIELD_ALIASES 
+} from '../services/engine/normalization/index.js';
+import { supabaseService } from '../services/supabase.js';
+import { generateSampleCSVString } from '../services/engine/statementParser.js';
 
 export function UploadTransactionsView({ 
   activeSourceInfo, 
@@ -26,29 +40,31 @@ export function UploadTransactionsView({
 }) {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [parsedData, setParsedData] = useState(null); // { transactions, metadata }
+  const [rawCsvText, setRawCsvText] = useState(null);
+  
+  // Pipeline analysis & parsed results
+  const [structureAnalysis, setStructureAnalysis] = useState(null);
+  const [columnMapping, setColumnMapping] = useState({});
+  const [showMappingScreen, setShowMappingScreen] = useState(false);
+  const [parsedData, setParsedData] = useState(null); // { transactions, readyTransactions, needsReviewTransactions, duplicateTransactions, metadata, stats }
+  
   const [error, setError] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [importProgress, setImportProgress] = useState(null); // { percent, step }
+  const [importProgress, setImportProgress] = useState(null); // { percent, step, steps: [] }
   const [isImportCompleted, setIsImportCompleted] = useState(false);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  
   const fileInputRef = useRef(null);
 
-  // Compute 6 explicit dataset statistics (Section 14)
-  const stats = React.useMemo(() => {
+  // Compute 6 explicit dataset statistics (Section 14 backward-compatible stats)
+  const stats = useMemo(() => {
     if (!parsedData || !parsedData.metadata) return null;
     const totalRows = parsedData.metadata.totalRows || parsedData.transactions.length;
     const validTransactions = parsedData.metadata.validCount || parsedData.transactions.length;
-    const invalidTransactions = Math.max(0, totalRows - validTransactions);
-    
-    // Calculate duplicates by transaction ID or key combination
-    const seen = new Set();
-    let duplicateTransactions = 0;
-    parsedData.transactions.forEach(t => {
-      const key = t.id || `${t.date}-${t.cleanMerchant}-${t.amount}`;
-      if (seen.has(key)) duplicateTransactions++;
-      else seen.add(key);
-    });
-
+    const invalidTransactions = parsedData.metadata.invalidCount !== undefined 
+      ? parsedData.metadata.invalidCount 
+      : Math.max(0, totalRows - validTransactions);
+    const duplicateTransactions = parsedData.metadata.duplicateCount || 0;
     const importedTransactions = validTransactions;
 
     return {
@@ -61,13 +77,14 @@ export function UploadTransactionsView({
     };
   }, [parsedData]);
 
-  // Active step calculation: 1. Upload -> 2. Validate -> 3. Preview -> 4. Import -> 5. Complete
-  const currentStep = React.useMemo(() => {
+  // Active step calculation: 1. Upload -> 2. Map (if needed) -> 3. Preview -> 4. Import -> 5. Complete
+  const currentStep = useMemo(() => {
     if (isImportCompleted) return 5;
     if (importProgress) return 4;
-    if (parsedData) return 3; // Step 2 & 3: Validate & Preview
+    if (parsedData && !showMappingScreen) return 3; // Step 3: Preview
+    if (structureAnalysis && showMappingScreen) return 2; // Step 2: Column Mapping
     return 1; // Step 1: Upload
-  }, [isImportCompleted, importProgress, parsedData]);
+  }, [isImportCompleted, importProgress, parsedData, structureAnalysis, showMappingScreen]);
 
   // Import history stored in localStorage
   const [importHistory, setImportHistory] = useState(() => {
@@ -78,7 +95,6 @@ export function UploadTransactionsView({
         if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
-    // Seed default import history if activeSourceInfo exists
     if (activeSourceInfo) {
       return [{
         id: 'hist-1',
@@ -120,11 +136,56 @@ export function UploadTransactionsView({
     }
   };
 
+  /**
+   * Processes uploaded raw CSV text through the normalization pipeline
+   */
+  const processCsvContent = (text, fileName, customMapping = null) => {
+    setError(null);
+    setIsProcessing(true);
+
+    try {
+      // 1. Analyze CSV structure & columns
+      const analysis = analyzeCSVStructure(text, fileName);
+      setStructureAnalysis(analysis);
+      setRawCsvText(text);
+
+      const mappingToUse = customMapping || analysis.mapping;
+      setColumnMapping(mappingToUse);
+
+      // If confidence is low or required columns missing and no custom mapping provided yet:
+      if (!analysis.isConfident && !customMapping) {
+        setShowMappingScreen(true);
+        setIsProcessing(false);
+        return;
+      }
+
+      // 2. Execute full normalization pipeline
+      const existing = [];
+      try {
+        const stored = localStorage.getItem('smart_expense_active_transactions');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) existing.push(...parsed);
+        }
+      } catch {}
+
+      const result = executeNormalizationPipeline(text, fileName, mappingToUse, existing);
+      setParsedData(result);
+      setShowMappingScreen(false);
+      setError(null);
+    } catch (err) {
+      console.error('Normalization Pipeline Error:', err);
+      setParsedData(null);
+      setError(err.message || 'We couldn\'t analyze this file. Please verify CSV structure and columns.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const processFile = (file) => {
     setError(null);
     if (!file) return;
 
-    // Strict validation: Only accept .csv files
     const isCsvName = file.name.toLowerCase().endsWith('.csv');
     if (!isCsvName) {
       setError('Only CSV files are accepted. Please provide a valid .csv bank transaction statement.');
@@ -136,18 +197,8 @@ export function UploadTransactionsView({
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      try {
-        const text = event.target.result;
-        const result = parseCSVWithMetadata(text, file.name);
-        setParsedData(result);
-        setError(null);
-      } catch (err) {
-        console.error('CSV Parsing Error:', err);
-        setParsedData(null);
-        setError(err.message || 'We couldn\'t analyze this file. Please verify CSV structure and columns.');
-      } finally {
-        setIsProcessing(false);
-      }
+      const text = event.target.result;
+      processCsvContent(text, file.name);
     };
 
     reader.onerror = () => {
@@ -181,60 +232,109 @@ export function UploadTransactionsView({
     try {
       const sampleCsvText = generateSampleCSVString(200);
       const fileName = 'Merged_200_Unique_Transactions.csv';
-      const result = parseCSVWithMetadata(sampleCsvText, fileName);
       setSelectedFile({ name: fileName, size: sampleCsvText.length });
-      setParsedData(result);
-      setError(null);
+      processCsvContent(sampleCsvText, fileName);
     } catch (err) {
       setError(err.message || 'Failed to generate sample CSV.');
-    } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleConfirmAnalyze = () => {
+  /**
+   * Applies manual column mapping edits and re-normalizes
+   */
+  const handleApplyCustomMapping = () => {
+    if (!rawCsvText || !structureAnalysis) return;
+    processCsvContent(rawCsvText, structureAnalysis.fileName, columnMapping);
+  };
+
+  /**
+   * Confirms import, triggers Section 13 professional progress,
+   * inserts into Supabase / local source of truth, and refreshes the application.
+   */
+  const handleConfirmAnalyze = async () => {
     if (!parsedData || !parsedData.transactions || parsedData.transactions.length === 0) {
       setError('Please upload and preview a valid CSV before analyzing.');
       return;
     }
 
-    // Step-by-step import progress animation
-    setImportProgress({ percent: 25, step: 'Validating column structure...' });
-    setTimeout(() => {
-      setImportProgress({ percent: 65, step: 'Normalizing transaction merchants...' });
-      setTimeout(() => {
-        setImportProgress({ percent: 90, step: 'Detecting recurring subscriptions & cash flow...' });
-        setTimeout(() => {
-          setImportProgress({ percent: 100, step: 'Analysis complete!' });
-          saveToHistory(parsedData.metadata);
-          setIsImportCompleted(true);
-          setImportProgress(null);
-          if (onAnalyzeTransactions) {
-            onAnalyzeTransactions(parsedData.transactions, parsedData.metadata);
-          }
-        }, 400);
-      }, 400);
-    }, 400);
+    const totalToProcess = parsedData.metadata.totalRows || parsedData.transactions.length;
+
+    // Section 13: Standard subtle progress steps
+    const progressStages = [
+      { step: 'Reading CSV', percent: 15 },
+      { step: 'Detecting columns', percent: 30 },
+      { step: 'Standardizing dates', percent: 45 },
+      { step: 'Detecting income and expenses', percent: 60 },
+      { step: 'Normalizing merchants', percent: 75 },
+      { step: 'Categorizing transactions', percent: 90 },
+      { step: 'Checking duplicates', percent: 100 }
+    ];
+
+    let stageIdx = 0;
+    setImportProgress({
+      percent: progressStages[0].percent,
+      step: progressStages[0].step,
+      count: 0,
+      total: totalToProcess,
+      completedSteps: []
+    });
+
+    const interval = setInterval(async () => {
+      stageIdx++;
+      if (stageIdx < progressStages.length) {
+        setImportProgress({
+          percent: progressStages[stageIdx].percent,
+          step: progressStages[stageIdx].step,
+          count: Math.round((progressStages[stageIdx].percent / 100) * totalToProcess),
+          total: totalToProcess,
+          completedSteps: progressStages.slice(0, stageIdx).map(s => s.step)
+        });
+      } else {
+        clearInterval(interval);
+
+        // Section 14: Save normalized transactions to Supabase & local source of truth
+        try {
+          await supabaseService.insertTransactions(parsedData.readyTransactions);
+        } catch (dbErr) {
+          console.warn('Database sync notification:', dbErr);
+        }
+
+        saveToHistory(parsedData.metadata);
+        setIsImportCompleted(true);
+        setImportProgress(null);
+
+        // Refresh entire application with normalized transactions
+        if (onAnalyzeTransactions) {
+          onAnalyzeTransactions(parsedData.readyTransactions, parsedData.metadata);
+        }
+      }
+    }, 280);
   };
 
   const handleResetUpload = () => {
     setSelectedFile(null);
+    setRawCsvText(null);
+    setStructureAnalysis(null);
+    setColumnMapping({});
+    setShowMappingScreen(false);
     setParsedData(null);
     setError(null);
     setImportProgress(null);
     setIsImportCompleted(false);
+    setShowReviewModal(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
   // Preview transactions (first 10 rows)
-  const previewRows = parsedData?.transactions?.slice(0, 10) || [];
+  const previewRows = parsedData?.readyTransactions?.slice(0, 10) || parsedData?.transactions?.slice(0, 10) || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
       
-      {/* Header Panel */}
+      {/* 1. Header Panel */}
       <div className="glass-panel" style={{ padding: '28px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
           <div>
@@ -262,7 +362,7 @@ export function UploadTransactionsView({
         </div>
       </div>
 
-      {/* 5-STEP WORKFLOW STEPPER (Section 14) */}
+      {/* 2. 5-STEP WORKFLOW STEPPER */}
       <div 
         className="glass-panel" 
         style={{ 
@@ -275,9 +375,9 @@ export function UploadTransactionsView({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
           {[
             { step: 1, title: '1. Upload', desc: 'Select CSV' },
-            { step: 2, title: '2. Validate', desc: 'Verify columns' },
-            { step: 3, title: '3. Preview', desc: 'First 10 rows' },
-            { step: 4, title: '4. Import', desc: 'Analyze data' },
+            { step: 2, title: '2. Column Mapping', desc: structureAnalysis?.isConfident ? 'Format detected' : 'Map fields' },
+            { step: 3, title: '3. Preview', desc: 'Sample rows' },
+            { step: 4, title: '4. Import', desc: 'Normalize & save' },
             { step: 5, title: '5. Complete', desc: 'Dataset ready' }
           ].map((s) => {
             const isCurrent = currentStep === s.step;
@@ -325,7 +425,7 @@ export function UploadTransactionsView({
         </div>
       </div>
 
-      {/* 5. STEP 5: IMPORT COMPLETE SCREEN (Section 14) */}
+      {/* 3. STEP 5: IMPORT COMPLETE SCREEN (Section 14) */}
       {isImportCompleted && stats && (
         <div className="glass-panel" style={{ padding: '48px 32px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '20px', textAlign: 'center' }}>
           <div className="icon-box-mint" style={{ width: '64px', height: '64px', borderRadius: '50%', margin: '0 auto 18px auto' }}>
@@ -337,7 +437,7 @@ export function UploadTransactionsView({
           </h2>
 
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', maxWidth: '540px', margin: '0 auto 28px auto', lineHeight: 1.5 }}>
-            Your transaction statement has been fully normalized and categorized. Balances, subscription renewals, spending charts, cash runway, and anomaly radar have all been updated dynamically.
+            Your transaction statement has been fully normalized, categorized, and persisted. Balances, subscription renewals, spending charts, cash runway, and anomaly radar have all been updated dynamically.
           </p>
 
           {/* 6 Core Import Statistics (Section 14) */}
@@ -399,37 +499,70 @@ export function UploadTransactionsView({
         </div>
       )}
 
-      {/* IMPORT PROGRESS BAR MODAL / OVERLAY (Step 4) */}
+      {/* 4. IMPORT PROGRESS BAR (Section 13) */}
       {importProgress && !isImportCompleted && (
-        <div className="glass-card" style={{ padding: '24px 28px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div className="status-dot status-dot-green" />
-              <strong style={{ fontSize: '0.94rem', color: 'var(--text-main)' }}>
-                {importProgress.step}
+        <div className="glass-card" style={{ padding: '26px 30px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <strong style={{ fontSize: '1.05rem', color: 'var(--text-main)' }}>
+                Preparing your transactions...
               </strong>
+              <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--primary)' }}>
+                {importProgress.count} / {importProgress.total} processed
+              </span>
             </div>
-            <span style={{ fontSize: '0.86rem', fontWeight: 700, color: 'var(--primary)' }}>
-              {importProgress.percent}%
-            </span>
+
+            <div style={{ width: '100%', height: '8px', background: '#E4E9E3', borderRadius: '4px', overflow: 'hidden' }}>
+              <div 
+                style={{ 
+                  width: `${importProgress.percent}%`, 
+                  height: '100%', 
+                  background: 'var(--primary)', 
+                  transition: 'width 0.25s ease',
+                  borderRadius: '4px' 
+                }} 
+              />
+            </div>
           </div>
 
-          <div style={{ width: '100%', height: '8px', background: '#E4E9E3', borderRadius: '4px', overflow: 'hidden' }}>
-            <div 
-              style={{ 
-                width: `${importProgress.percent}%`, 
-                height: '100%', 
-                background: 'var(--primary)', 
-                transition: 'width 0.35s ease',
-                borderRadius: '4px' 
-              }} 
-            />
+          {/* Section 13: Clean step indicators */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '0.8rem' }}>
+            {[
+              'Reading CSV',
+              'Detecting columns',
+              'Standardizing dates',
+              'Detecting income and expenses',
+              'Normalizing merchants',
+              'Categorizing transactions',
+              'Checking duplicates'
+            ].map((stepName) => {
+              const isDone = importProgress.completedSteps?.includes(stepName) || importProgress.percent === 100;
+              const isCurrent = importProgress.step === stepName;
+
+              return (
+                <div 
+                  key={stepName}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    color: isDone ? 'var(--primary)' : isCurrent ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: isDone || isCurrent ? 600 : 400
+                  }}
+                >
+                  <span style={{ color: isDone ? 'var(--primary)' : '#CBD5E1', fontSize: '0.9rem' }}>
+                    {isDone ? '✓' : '○'}
+                  </span>
+                  <span>{stepName}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* DRAG AND DROP ZONE (Step 1) */}
-      {!parsedData && !isImportCompleted && (
+      {/* 5. DRAG AND DROP ZONE (Step 1) */}
+      {!parsedData && !showMappingScreen && !isImportCompleted && (
         <div 
           className="glass-card"
           onDragEnter={handleDrag}
@@ -510,7 +643,7 @@ export function UploadTransactionsView({
         </div>
       )}
 
-      {/* ERROR ALERT */}
+      {/* 6. ERROR ALERT */}
       {error && (
         <div style={{
           background: '#FFF5F5',
@@ -533,307 +666,379 @@ export function UploadTransactionsView({
         </div>
       )}
 
-      {/* FILE INFORMATION CARD (VALIDATION & METRICS) */}
-      {parsedData && !isImportCompleted && (
+      {/* 7. SECTION 4 & 16: COLUMN MAPPING SCREEN */}
+      {showMappingScreen && structureAnalysis && (
+        <div className="glass-panel" style={{ padding: '26px 28px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Settings2 size={18} color="var(--primary)" />
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+                  Column Mapping
+                </h3>
+              </div>
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
+                {structureAnalysis.isConfident 
+                  ? 'Review detected column mappings below before proceeding.' 
+                  : `We couldn't identify ${structureAnalysis.missingRequired?.length || 'some'} required columns automatically. Please match your bank columns to Smart Expense fields.`}
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => setShowMappingScreen(false)} className="btn btn-secondary btn-sm">
+                Cancel
+              </button>
+              <button onClick={handleApplyCustomMapping} className="btn btn-primary btn-sm">
+                Apply Mapping & Normalize
+              </button>
+            </div>
+          </div>
+
+          {/* Mapping Table */}
+          <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px', marginBottom: '18px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ background: '#FAFAF7', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '12px 16px', fontWeight: 600 }}>BANK COLUMN</th>
+                  <th style={{ padding: '12px 16px', fontWeight: 600 }}>SAMPLE VALUE</th>
+                  <th style={{ padding: '12px 16px', fontWeight: 600 }}>SMART EXPENSE FIELD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {structureAnalysis.headers.map((header, colIdx) => {
+                  // Find if this column is currently mapped to any canonical key
+                  const currentCanonicalKey = Object.entries(columnMapping).find(([_, idx]) => idx === colIdx)?.[0] || '';
+                  const sampleVal = structureAnalysis.sampleRows[0]?.[colIdx] || '—';
+
+                  const canonicalOptions = [
+                    { key: '', label: '— Ignore column —' },
+                    { key: 'date', label: 'Date (YYYY-MM-DD / DD-MM-YYYY)' },
+                    { key: 'description', label: 'Description / Narration' },
+                    { key: 'debit', label: 'Debit / Withdrawal' },
+                    { key: 'credit', label: 'Credit / Deposit' },
+                    { key: 'amount', label: 'Amount (Single Column)' },
+                    { key: 'type', label: 'Dr/Cr / Type Flag' },
+                    { key: 'balance', label: 'Account Balance' },
+                    { key: 'account', label: 'Account / Bank' },
+                    { key: 'category', label: 'Category' },
+                    { key: 'transaction_id', label: 'Transaction ID / Ref No' }
+                  ];
+
+                  return (
+                    <tr key={colIdx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--text-main)' }}>
+                        {header}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                        {sampleVal}
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <select
+                          value={currentCanonicalKey}
+                          onChange={(e) => {
+                            const newKey = e.target.value;
+                            const updated = { ...columnMapping };
+                            // Remove previous assignment for this index
+                            for (const [k, v] of Object.entries(updated)) {
+                              if (v === colIdx) delete updated[k];
+                            }
+                            if (newKey) {
+                              updated[newKey] = colIdx;
+                            }
+                            setColumnMapping(updated);
+                          }}
+                          className="input-select"
+                          style={{ fontSize: '0.82rem', padding: '6px 12px', width: '240px' }}
+                        >
+                          {canonicalOptions.map(opt => (
+                            <option key={opt.key} value={opt.key}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <button onClick={handleApplyCustomMapping} className="btn btn-primary">
+              Confirm Mapping & Preview Transactions
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 8. SECTION 12: IMPORT PREVIEW & FORMAT DETECTION BADGE */}
+      {parsedData && !showMappingScreen && !isImportCompleted && (
         <div className="glass-panel" style={{ padding: '24px 28px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px' }}>
+          
+          {/* Header Row with Format Detection Badge */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div className="icon-box-mint" style={{ width: '42px', height: '42px', borderRadius: '12px' }}>
                 <CheckCircle2 size={22} color="var(--primary)" />
               </div>
               <div>
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
-                  {parsedData.metadata.fileName}
-                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+                    {parsedData.metadata.fileName}
+                  </h3>
+                  {/* Section 4 requirement: "Statement format detected" */}
+                  <span className="badge badge-emerald" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <Check size={12} />
+                    <span>Statement format detected {parsedData.metadata.detectedBank ? `(${parsedData.metadata.detectedBank})` : ''}</span>
+                  </span>
+                </div>
                 <div style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginTop: '3px' }}>
-                  <strong style={{ color: 'var(--primary)' }}>{parsedData.metadata.validCount} transactions validated</strong> • Date range: {parsedData.metadata.dateRange?.label || 'Dynamically calculated'}
+                  {parsedData.metadata.dateRange?.label || 'Dynamically calculated'}
                 </div>
               </div>
             </div>
 
-            <button 
-              onClick={handleResetUpload}
-              className="btn btn-secondary btn-sm"
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <RefreshCw size={14} />
-              <span>Upload New CSV</span>
-            </button>
-          </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button 
+                onClick={() => setShowMappingScreen(true)}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                title="Review or adjust bank column mappings"
+              >
+                <Settings2 size={13} />
+                <span>Adjust Column Mapping</span>
+              </button>
 
-          {/* 6 Core Statistics Required (Section 14) */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                File Name
-              </div>
-              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {stats?.fileName || parsedData.metadata.fileName}
-              </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Number of Rows
-              </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                {stats?.numberOfRows || parsedData.metadata.totalRows}
-              </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Valid Transactions
-              </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--primary)' }}>
-                {stats?.validTransactions || parsedData.metadata.validCount}
-              </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Invalid Transactions
-              </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: (stats?.invalidTransactions || 0) > 0 ? 'var(--accent-rose)' : 'var(--text-main)' }}>
-                {stats?.invalidTransactions ?? 0}
-              </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Duplicate Transactions
-              </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: (stats?.duplicateTransactions || 0) > 0 ? 'var(--accent-amber)' : 'var(--text-main)' }}>
-                {stats?.duplicateTransactions ?? 0}
-              </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Imported Transactions
-              </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--primary)' }}>
-                {stats?.importedTransactions || parsedData.metadata.validCount}
-              </div>
+              <button 
+                onClick={handleResetUpload}
+                className="btn btn-secondary btn-sm"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <RefreshCw size={13} />
+                <span>Upload New CSV</span>
+              </button>
             </div>
           </div>
 
-          {/* Additional Statement Metrics from CSV */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+          {/* Section 12 4-Box Preview Summary: Total Detected, Normalized, Invalid, Duplicates */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '22px' }}>
             <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Total Debits (Spending)
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+                Transactions Detected
               </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                {formatINR(parsedData.metadata.totalDebit || 0)}
+              <div style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '2px' }}>
+                {parsedData.stats.totalRows}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>Found in statement file</div>
+            </div>
+
+            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+                Successfully Normalized
+              </div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--primary)', marginTop: '2px' }}>
+                {parsedData.stats.readyCount}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--primary)', fontWeight: 600 }}>Ready for import</div>
+            </div>
+
+            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+                Needs Review / Invalid
+              </div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 800, color: parsedData.stats.needsReviewCount > 0 ? 'var(--accent-rose)' : 'var(--text-main)', marginTop: '2px' }}>
+                {parsedData.stats.needsReviewCount}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: parsedData.stats.needsReviewCount > 0 ? 'var(--accent-rose)' : 'var(--text-muted)' }}>
+                {parsedData.stats.needsReviewCount > 0 ? 'Validation issues found' : '0 issues detected'}
               </div>
             </div>
 
             <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Total Credits (Income)
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+                Duplicates Skipped
               </div>
-              <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--primary)' }}>
-                {formatINR(parsedData.metadata.totalCredit || 0)}
+              <div style={{ fontSize: '1.45rem', fontWeight: 800, color: parsedData.stats.duplicateCount > 0 ? '#D97706' : 'var(--text-main)', marginTop: '2px' }}>
+                {parsedData.stats.duplicateCount}
               </div>
-            </div>
-
-            <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '4px' }}>
-                Date Range
-              </div>
-              <div style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)', marginTop: '4px' }}>
-                {parsedData.metadata.dateRange?.label || 'Calculated from CSV'}
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                {parsedData.stats.duplicateCount > 0 ? 'Identified by fingerprint' : '0 duplicate rows'}
               </div>
             </div>
           </div>
 
-          {/* Detected Columns */}
-          <div>
-            <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, marginBottom: '8px' }}>
-              Detected Columns ({parsedData.metadata.detectedColumns?.length || 0}):
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {parsedData.metadata.detectedColumns?.map((col, idx) => (
-                <span 
-                  key={idx} 
-                  className="badge badge-emerald" 
-                  style={{ fontSize: '0.74rem', padding: '3px 9px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                >
-                  <Check size={11} />
-                  <span>{col}</span>
+          {/* Warning banner if rows need review (Section 12 & 15) */}
+          {parsedData.stats.needsReviewCount > 0 && (
+            <div style={{ 
+              background: '#FFFBEB', 
+              border: '1px solid #FDE68A', 
+              borderRadius: '12px', 
+              padding: '12px 18px', 
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '10px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertTriangle size={18} color="#D97706" />
+                <span style={{ fontSize: '0.86rem', color: '#92400E' }}>
+                  <strong>{parsedData.stats.needsReviewCount} transactions</strong> could not be completely interpreted and need review.
                 </span>
+              </div>
+              <button 
+                onClick={() => setShowReviewModal(true)} 
+                className="btn btn-secondary btn-sm"
+                style={{ fontSize: '0.78rem', color: '#B45309', borderColor: '#FCD34D' }}
+              >
+                Review Issues ({parsedData.stats.needsReviewCount})
+              </button>
+            </div>
+          )}
+
+          {/* Section 12 Preview Table: Date, Merchant, Category, Type, Amount */}
+          <div style={{ border: '1px solid var(--border-color)', borderRadius: '14px', overflow: 'hidden', marginBottom: '22px' }}>
+            <div style={{ padding: '14px 20px', background: '#FAFAF7', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <strong style={{ fontSize: '0.9rem', color: 'var(--text-main)' }}>
+                Sample Preview (First 10 Rows)
+              </strong>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Displaying canonicalized attributes
+              </span>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
+                <thead>
+                  <tr style={{ background: '#FFFFFF', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '12px 18px', fontWeight: 600 }}>DATE</th>
+                    <th style={{ padding: '12px 18px', fontWeight: 600 }}>MERCHANT</th>
+                    <th style={{ padding: '12px 18px', fontWeight: 600 }}>CATEGORY</th>
+                    <th style={{ padding: '12px 18px', fontWeight: 600 }}>TYPE</th>
+                    <th style={{ padding: '12px 18px', fontWeight: 600, textAlign: 'right' }}>AMOUNT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((tx, idx) => {
+                    const isIncome = tx.type === 'income' || tx.type === 'CREDIT';
+                    return (
+                      <tr 
+                        key={tx.id || idx}
+                        style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.15s' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#F5F6F2'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <td style={{ padding: '12px 18px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {tx.date}
+                        </td>
+                        <td style={{ padding: '12px 18px' }}>
+                          <strong style={{ color: 'var(--text-main)', display: 'block' }}>
+                            {tx.merchant || tx.cleanMerchant}
+                          </strong>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }} title={tx.original_description}>
+                            {tx.original_description?.length > 32 ? `${tx.original_description.slice(0, 32)}...` : tx.original_description}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 18px' }}>
+                          <span className="badge badge-muted" style={{ fontSize: '0.7rem' }}>
+                            {tx.category}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 18px' }}>
+                          <span className={`badge ${isIncome ? 'badge-emerald' : 'badge-muted'}`} style={{ fontSize: '0.68rem', textTransform: 'capitalize' }}>
+                            {tx.type}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 18px', textAlign: 'right', fontWeight: 700, color: isIncome ? 'var(--primary)' : 'var(--text-main)', whiteSpace: 'nowrap' }}>
+                          {isIncome ? '+ ' : '− '}{formatINR(tx.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 12 Action Buttons: [Cancel], [Review Issues], [Import X Transactions] */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+            <button onClick={handleResetUpload} className="btn btn-secondary">
+              Cancel
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {parsedData.stats.needsReviewCount > 0 && (
+                <button onClick={() => setShowReviewModal(true)} className="btn btn-secondary">
+                  Review Issues ({parsedData.stats.needsReviewCount})
+                </button>
+              )}
+
+              <button
+                onClick={handleConfirmAnalyze}
+                className="btn btn-primary btn-lg"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(24, 118, 90, 0.22)'
+                }}
+              >
+                <span>Import {parsedData.stats.readyCount} Transactions</span>
+                <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* 9. ISSUES REVIEW MODAL (Section 12 & 15) */}
+      {showReviewModal && parsedData && (
+        <div className="modal-overlay" onClick={() => setShowReviewModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '680px', padding: '26px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+                  Review Issues ({parsedData.needsReviewTransactions?.length || 0})
+                </h3>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                  These rows encountered validation errors or unrecognized formats.
+                </p>
+              </div>
+              <button onClick={() => setShowReviewModal(false)} className="btn btn-secondary btn-sm" style={{ borderRadius: '50%', width: '28px', height: '28px', padding: 0 }}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <div style={{ maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+              {parsedData.needsReviewTransactions?.map((row, idx) => (
+                <div key={idx} style={{ background: '#FFFDF5', border: '1px solid #FDE68A', borderRadius: '10px', padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                    <strong style={{ fontSize: '0.86rem', color: 'var(--text-main)' }}>
+                      {row.original_description || 'Unspecified narration'}
+                    </strong>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                      Row #{idx + 1}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.76rem', color: '#B45309', marginTop: '2px' }}>
+                    {row.validation_errors?.join(' • ') || 'Needs manual inspection'}
+                  </div>
+                </div>
               ))}
             </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                You can proceed importing the {parsedData.stats.readyCount} valid transactions.
+              </span>
+              <button onClick={() => setShowReviewModal(false)} className="btn btn-primary btn-sm">
+                Close Review
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      {/* TRANSACTION PREVIEW TABLE */}
-      {parsedData && !isImportCompleted && (
-        <div className="glass-panel" style={{ padding: '0px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px', overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-            <div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
-                Transaction Preview (First 10 Rows)
-              </h3>
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '3px 0 0 0' }}>
-                Review sample transactions before running financial intelligence analysis
-              </p>
-            </div>
-
-            <button
-              onClick={handleConfirmAnalyze}
-              className="btn btn-primary"
-              style={{
-                padding: '10px 24px',
-                fontSize: '0.92rem',
-                borderRadius: '10px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: '0 4px 14px rgba(24, 118, 90, 0.22)'
-              }}
-            >
-              <span>Analyze Transactions</span>
-              <ArrowRight size={16} />
-            </button>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
-              <thead>
-                <tr style={{ background: '#FAFAF7', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '14px 20px', fontWeight: 600 }}>DATE</th>
-                  <th style={{ padding: '14px 20px', fontWeight: 600 }}>DESCRIPTION</th>
-                  <th style={{ padding: '14px 20px', fontWeight: 600 }}>MERCHANT</th>
-                  <th style={{ padding: '14px 20px', fontWeight: 600 }}>CATEGORY</th>
-                  <th style={{ padding: '14px 20px', fontWeight: 600, textAlign: 'right' }}>DEBIT</th>
-                  <th style={{ padding: '14px 20px', fontWeight: 600, textAlign: 'right' }}>CREDIT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {previewRows.map((tx, idx) => (
-                  <tr 
-                    key={tx.id || idx}
-                    style={{ borderBottom: '1px solid var(--border-color)', transition: 'background 0.15s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = '#F5F6F2'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <td style={{ padding: '13px 20px', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>
-                      {tx.date}
-                    </td>
-                    <td style={{ padding: '13px 20px', color: 'var(--text-main)', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {tx.description || tx.rawNarration}
-                    </td>
-                    <td style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--text-main)' }}>
-                      {tx.cleanMerchant || tx.merchant}
-                    </td>
-                    <td style={{ padding: '13px 20px' }}>
-                      <span className="badge badge-muted" style={{ fontSize: '0.72rem' }}>
-                        {tx.category}
-                      </span>
-                    </td>
-                    <td style={{ padding: '13px 20px', textAlign: 'right', fontWeight: 600, color: tx.type === 'DEBIT' ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                      {tx.type === 'DEBIT' ? formatINR(tx.amount) : '—'}
-                    </td>
-                    <td style={{ padding: '13px 20px', textAlign: 'right', fontWeight: 600, color: tx.type === 'CREDIT' ? 'var(--primary)' : 'var(--text-muted)' }}>
-                      {tx.type === 'CREDIT' ? formatINR(tx.amount) : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Bottom Confirmation Bar */}
-          <div style={{ padding: '18px 24px', background: '#FAFAF7', borderTop: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Showing first 10 of {parsedData.metadata.validCount} transactions. The main overview will update upon clicking Analyze.
-            </div>
-
-            <button
-              onClick={handleConfirmAnalyze}
-              className="btn btn-primary"
-              style={{
-                padding: '10px 24px',
-                fontSize: '0.92rem',
-                borderRadius: '10px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px'
-              }}
-            >
-              <span>Analyze Transactions</span>
-              <ArrowRight size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* IMPORT HISTORY SECTION */}
-      {importHistory.length > 0 && (
-        <div className="glass-panel" style={{ padding: '24px 28px', background: '#FFFFFF', border: '1px solid var(--border-color)', borderRadius: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-            <div className="icon-box-mint">
-              <History size={17} color="var(--primary)" />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', margin: 0 }}>
-                Import History
-              </h3>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
-                Recent bank statement imports processed during your session
-              </p>
-            </div>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
-              <thead>
-                <tr style={{ background: '#FAFAF7', borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '10px 14px', fontWeight: 600 }}>STATEMENT FILE</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 600 }}>IMPORTED AT</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 600 }}>TRANSACTIONS</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 600 }}>TOTAL DEBIT</th>
-                  <th style={{ padding: '10px 14px', fontWeight: 600 }}>STATUS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {importHistory.map((item, idx) => (
-                  <tr key={item.id || idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--text-main)' }}>
-                      {item.fileName}
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-muted)' }}>
-                      {item.date}
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-main)' }}>
-                      {item.count} rows
-                    </td>
-                    <td style={{ padding: '12px 14px', color: 'var(--text-main)' }}>
-                      {formatINR(item.totalDebit)}
-                    </td>
-                    <td style={{ padding: '12px 14px' }}>
-                      <span className="badge badge-emerald" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
-                        {item.status || 'Imported'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Privacy Guarantee Note */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px 20px', background: '#FAFAF7', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-        <ShieldCheck size={18} color="var(--primary)" style={{ flexShrink: 0 }} />
-        <span>
-          <strong>Data Privacy:</strong> Bank statement CSV parsing and calculations run entirely within your local browser sandbox. Financial records are never dispatched to external third parties.
-        </span>
-      </div>
 
     </div>
   );

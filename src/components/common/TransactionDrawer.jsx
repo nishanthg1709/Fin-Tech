@@ -23,7 +23,7 @@ export function TransactionDrawer({
 }) {
   if (!isOpen || !transaction) return null;
 
-  const isCredit = transaction.type === 'CREDIT';
+  const isCredit = transaction.type === 'CREDIT' || transaction.type === 'income';
   const cleanMerchant = transaction.cleanMerchant || transaction.merchant || 'Unknown Merchant';
   const rawNarration = transaction.rawNarration || transaction.raw || transaction.description || 'N/A';
 

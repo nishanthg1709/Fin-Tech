@@ -52,7 +52,7 @@ export function DashboardOverview({
 
   // Derive total monthly spending
   const totalDebitSpending = normalizedTransactions
-    .filter(t => t.type !== 'CREDIT' && t.amount > 0)
+    .filter(t => (t.type === 'DEBIT' || t.type === 'expense' || (t.type !== 'CREDIT' && t.type !== 'income' && t.type !== 'transfer')) && t.type !== 'transfer' && t.amount > 0)
     .reduce((sum, t) => sum + t.amount, 0) || 69500;
 
   return (

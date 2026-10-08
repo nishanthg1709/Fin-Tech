@@ -117,7 +117,7 @@ export function TodayActivity({
         {/* Chronological Stream */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {activityItems.map((tx) => {
-            const isCredit = tx.type === 'CREDIT';
+            const isCredit = tx.type === 'CREDIT' || tx.type === 'income';
 
             return (
               <div

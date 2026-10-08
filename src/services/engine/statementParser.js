@@ -200,7 +200,9 @@ export function parseCSVStatement(csvString, fileName = 'bank_statement.csv') {
 
     transactions.push({
       id,
+      user_id: null,
       date: parsedDate,
+      original_description: rawDesc || rawNarration,
       rawNarration,
       description: rawNarration,
       cleanMerchant,
@@ -209,8 +211,13 @@ export function parseCSVStatement(csvString, fileName = 'bank_statement.csv') {
       suggestedCategory: category,
       amount,
       type,
+      canonical_type: type === 'CREDIT' ? 'income' : 'expense',
       balance: balanceVal,
       balance_inr: balanceVal,
+      account: fileName,
+      source: 'csv',
+      is_reviewed: false,
+      created_at: new Date().toISOString(),
       payment_mode: paymentMode,
       paymentMode,
       recurring: isExplicitRecurring,
@@ -218,8 +225,7 @@ export function parseCSVStatement(csvString, fileName = 'bank_statement.csv') {
       billing_cycle_months: billingCycleMonths,
       billingCycle: billingCycleText,
       status,
-      data_type: dataType,
-      source: 'CSV_UPLOAD'
+      data_type: dataType
     });
   }
 

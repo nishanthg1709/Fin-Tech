@@ -64,9 +64,12 @@ export function runFinancialIntelligencePipeline(rawTransactions = [], currentBa
   // Step 6: Forecast Cash-Flow commitments
   const cashFlow = forecastCashFlow(subscriptions, effectiveBalance, '30 Days');
 
-  // Compute Aggregates in INR
-  const debits = normalizedTransactions.filter(t => t.type !== 'CREDIT' && t.amount > 0);
-  const credits = normalizedTransactions.filter(t => t.type === 'CREDIT' && t.amount > 0);
+  // Compute Aggregates in INR (supporting canonical "income"/"expense" and legacy "CREDIT"/"DEBIT")
+  const isCredit = (t) => t.type === 'CREDIT' || t.type === 'income' || t.canonical_type === 'income';
+  const isDebit = (t) => (t.type === 'DEBIT' || t.type === 'expense' || t.canonical_type === 'expense' || (t.type !== 'CREDIT' && t.type !== 'income' && t.type !== 'transfer')) && t.type !== 'transfer';
+
+  const debits = normalizedTransactions.filter(t => isDebit(t) && t.amount > 0);
+  const credits = normalizedTransactions.filter(t => isCredit(t) && t.amount > 0);
 
   const totalSpending = debits.reduce((sum, t) => sum + t.amount, 0);
   const totalIncome = credits.reduce((sum, t) => sum + t.amount, 0);

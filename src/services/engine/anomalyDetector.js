@@ -49,7 +49,7 @@ export function detectAnomalies(transactions, subscriptions) {
 
   // 2. Detect Large Outliers / Unusual Transaction Amounts
   // Calculate normal spending range across non-salary debits
-  const debits = transactions.filter(t => t.type !== 'CREDIT' && t.amount > 0);
+  const debits = transactions.filter(t => t.type !== 'CREDIT' && t.type !== 'income' && t.type !== 'transfer' && t.amount > 0);
   const commonDebits = debits.filter(t => t.amount < 5000);
   const minNormal = 200;
   const maxNormal = 800;

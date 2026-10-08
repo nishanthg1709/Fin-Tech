@@ -23,8 +23,11 @@ export function MoneyPulse({
   const [selectedPillar, setSelectedPillar] = useState('lifestyle'); // 'needs' | 'lifestyle' | 'savings'
 
   // Derive dynamic stream figures from transactions or realistic baseline
-  const debits = transactions.filter(t => t.type !== 'CREDIT' && t.amount > 0);
-  const credits = transactions.filter(t => t.type === 'CREDIT' && t.amount > 0);
+  const isCredit = (t) => t.type === 'CREDIT' || t.type === 'income';
+  const isDebit = (t) => (t.type === 'DEBIT' || t.type === 'expense' || (t.type !== 'CREDIT' && t.type !== 'income')) && t.type !== 'transfer';
+
+  const debits = transactions.filter(t => isDebit(t) && t.amount > 0);
+  const credits = transactions.filter(t => isCredit(t) && t.amount > 0);
 
   const totalCredits = credits.reduce((sum, t) => sum + t.amount, 0) || 125000;
   const totalDebits = debits.reduce((sum, t) => sum + t.amount, 0) || 69500;

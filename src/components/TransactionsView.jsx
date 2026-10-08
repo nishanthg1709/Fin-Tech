@@ -49,8 +49,14 @@ export function TransactionsView({ transactions = [] }) {
       const cat = (tx.category || '').toLowerCase();
       const q = searchQuery.toLowerCase();
 
+      const isDebit = tx.type === 'DEBIT' || tx.type === 'expense';
+      const isCredit = tx.type === 'CREDIT' || tx.type === 'income';
+
       const matchesSearch = !q || raw.includes(q) || clean.includes(q) || cat.includes(q);
-      const matchesType = filterType === 'ALL' || tx.type === filterType;
+      const matchesType = filterType === 'ALL' || 
+        (filterType === 'DEBIT' && isDebit) || 
+        (filterType === 'CREDIT' && isCredit) || 
+        tx.type === filterType;
       const matchesCategory = selectedCategory === 'ALL' || tx.category === selectedCategory;
       const matchesMerchant = selectedMerchant === 'ALL' || (tx.cleanMerchant || tx.merchant) === selectedMerchant;
 
@@ -171,7 +177,7 @@ export function TransactionsView({ transactions = [] }) {
             </thead>
             <tbody>
               {currentItems.map(tx => {
-                const isCredit = tx.type === 'CREDIT';
+                const isCredit = tx.type === 'CREDIT' || tx.type === 'income';
                 const merchant = tx.cleanMerchant || tx.merchant || 'Unknown Merchant';
 
                 return (

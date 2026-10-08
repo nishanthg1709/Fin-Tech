@@ -40,8 +40,11 @@ export function SpendingSummaryView({
       return null;
     }
 
-    const debits = transactions.filter(t => t.type !== 'CREDIT' && t.amount > 0);
-    const credits = transactions.filter(t => t.type === 'CREDIT' && t.amount > 0);
+    const isCredit = (t) => t.type === 'CREDIT' || t.type === 'income' || t.canonical_type === 'income';
+    const isDebit = (t) => (t.type === 'DEBIT' || t.type === 'expense' || t.canonical_type === 'expense' || (t.type !== 'CREDIT' && t.type !== 'income' && t.type !== 'transfer')) && t.type !== 'transfer';
+
+    const debits = transactions.filter(t => isDebit(t) && t.amount > 0);
+    const credits = transactions.filter(t => isCredit(t) && t.amount > 0);
 
     const totalSpending = debits.reduce((sum, t) => sum + t.amount, 0);
     const totalIncome = credits.reduce((sum, t) => sum + t.amount, 0);
@@ -81,9 +84,9 @@ export function SpendingSummaryView({
       if (!monthMap[monthKey]) {
         monthMap[monthKey] = { monthKey, spending: 0, income: 0, count: 0 };
       }
-      if (t.type === 'CREDIT') {
+      if (isCredit(t)) {
         monthMap[monthKey].income += t.amount;
-      } else {
+      } else if (isDebit(t)) {
         monthMap[monthKey].spending += t.amount;
       }
       monthMap[monthKey].count += 1;
