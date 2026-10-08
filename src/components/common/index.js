@@ -11,3 +11,7 @@ export { AnomalyCard } from './AnomalyCard.jsx';
 export { CategoryExplorer } from './CategoryExplorer.jsx';
 export { InsightCard } from './InsightCard.jsx';
 export { FilterBar } from './FilterBar.jsx';
+export { CashFlowCard } from './CashFlowCard.jsx';
+export { SpendingCategoriesCard } from './SpendingCategoriesCard.jsx';
+export { UpcomingPaymentsCard } from './UpcomingPaymentsCard.jsx';
+export { RecentTransactionsCard } from './RecentTransactionsCard.jsx';

@@ -4,19 +4,30 @@ import {
   Calendar, 
   Sparkles, 
   ArrowUpRight, 
+  ArrowDownLeft,
   Clock, 
   ShieldCheck,
   TrendingUp,
-  UploadCloud
+  TrendingDown,
+  UploadCloud,
+  PiggyBank,
+  Percent,
+  CheckCircle2
 } from 'lucide-react';
 import { formatINR } from '../../utils/formatters.js';
 
 export function FinancialHero({
   userName = 'there',
   availableBalance = 78450,
+  monthlyIncome = 75000,
+  monthlySpending = 45365,
+  monthlySavings = 29635,
+  savingsRate = 39,
   safeToSpendTotal = 55889,
   runwayDays = 47,
   upcomingBillsCount = 4,
+  comparison = null,
+  periodLabel = null,
   onNavigate
 }) {
   // Time-aware greeting
@@ -35,9 +46,8 @@ export function FinancialHero({
     year: 'numeric'
   });
 
-  // Calculate safe to spend today: dynamic calculation (~safeToSpend / 30 or availableBalance / 30)
-  // When availableBalance is 78450, 78450 / 30 = 2615!
-  const safeToSpendToday = Math.round(availableBalance / 30);
+  // Calculate safe to spend today
+  const safeToSpendToday = Math.max(0, Math.round(safeToSpendTotal / 30));
 
   return (
     <div 
@@ -51,19 +61,27 @@ export function FinancialHero({
         overflow: 'hidden'
       }}
     >
-      {/* Top row: Greeting & Date */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '22px' }}>
+      {/* 1. Top row: Greeting, Date, Period Badge & Quick Actions */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px', marginBottom: '24px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
             <Calendar size={14} color="var(--primary)" />
             <span style={{ fontWeight: 500 }}>{currentDateFormatted}</span>
+            {periodLabel && (
+              <>
+                <span style={{ color: '#CBD5E1' }}>•</span>
+                <span className="badge badge-muted" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                  {periodLabel}
+                </span>
+              </>
+            )}
           </div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', margin: 0, letterSpacing: '-0.025em' }}>
             {getGreeting()}, <span style={{ color: 'var(--primary)' }}>{userName}</span>
           </h2>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div 
             onClick={() => onNavigate && onNavigate('/cash-flow')}
             style={{
@@ -77,7 +95,8 @@ export function FinancialHero({
               fontSize: '0.78rem',
               color: 'var(--primary)',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
             }}
             title="Click to view full cash flow runway"
           >
@@ -98,8 +117,8 @@ export function FinancialHero({
         </div>
       </div>
 
-      {/* Main Hero Financial Balance Split */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', alignItems: 'center' }}>
+      {/* 2. Main Hero Split: Available Balance & Safe to Spend Today */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', alignItems: 'center', marginBottom: '24px' }}>
         
         {/* Available Balance Core */}
         <div 
@@ -163,6 +182,101 @@ export function FinancialHero({
         </div>
 
       </div>
+
+      {/* 3. 4-Pillar Supporting Metrics: Income, Spending, Savings, Savings Rate */}
+      <div style={{ 
+        display: 'grid', 
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', 
+        gap: '12px',
+        paddingTop: '20px',
+        borderTop: '1px solid var(--border-color)'
+      }}>
+        
+        {/* Metric 1: Monthly Income */}
+        <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+              Monthly Income
+            </span>
+            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: 'var(--badge-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ArrowDownLeft size={13} color="var(--primary)" />
+            </div>
+          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.02em' }}>
+            +{formatINR(monthlyIncome)}
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+            Salary &amp; Credits
+          </div>
+        </div>
+
+        {/* Metric 2: Monthly Spending */}
+        <div 
+          onClick={() => onNavigate && onNavigate('/spending')}
+          style={{ 
+            background: '#FAFAF7', 
+            padding: '14px 16px', 
+            borderRadius: '12px', 
+            border: '1px solid var(--border-color)',
+            cursor: 'pointer',
+            transition: 'border-color 0.15s ease'
+          }}
+          title="Click to view spending breakdown"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+              Monthly Spending
+            </span>
+            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <ArrowUpRight size={13} color="var(--text-main)" />
+            </div>
+          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em' }}>
+            {formatINR(monthlySpending)}
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+            Total Outflows
+          </div>
+        </div>
+
+        {/* Metric 3: Monthly Savings */}
+        <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+              Monthly Savings
+            </span>
+            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: 'var(--badge-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <PiggyBank size={13} color="var(--primary)" />
+            </div>
+          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: monthlySavings > 0 ? 'var(--primary)' : 'var(--text-main)', letterSpacing: '-0.02em' }}>
+            {monthlySavings > 0 ? `+${formatINR(monthlySavings)}` : formatINR(0)}
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+            Net Cash Surplus
+          </div>
+        </div>
+
+        {/* Metric 4: Savings Rate & Comparison */}
+        <div style={{ background: '#FAFAF7', padding: '14px 16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
+              Savings Rate
+            </span>
+            <div style={{ width: '22px', height: '22px', borderRadius: '6px', background: 'var(--badge-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Percent size={13} color="var(--primary)" />
+            </div>
+          </div>
+          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.02em' }}>
+            {savingsRate}%
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={comparison?.text}>
+            {comparison?.text || `${savingsRate}% of income preserved`}
+          </div>
+        </div>
+
+      </div>
+
     </div>
   );
 }
