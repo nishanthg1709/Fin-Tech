@@ -11,7 +11,7 @@ import { predictUpcomingPayments } from './upcomingPredictor.js';
 import { detectAnomalies } from './anomalyDetector.js';
 import { forecastCashFlow } from './cashFlowForecaster.js';
 
-export function runFinancialIntelligencePipeline(rawTransactions = [], currentBalance = 78450.0) {
+export function runFinancialIntelligencePipeline(rawTransactions = [], currentBalance = 78450.0, userOverrides = {}) {
   const safeTxs = Array.isArray(rawTransactions) ? rawTransactions : [];
 
   // Check if balance is provided in CSV metadata or transactions
@@ -50,7 +50,7 @@ export function runFinancialIntelligencePipeline(rawTransactions = [], currentBa
   });
 
   // Step 2: Detect Recurring Payments (1 Month, 3 Months, 6 Months, 1 Year)
-  const subscriptions = detectRecurringExpenses(normalizedTransactions);
+  const subscriptions = detectRecurringExpenses(normalizedTransactions, userOverrides);
 
   // Step 3: Detect Price Changes
   const priceChanges = detectPriceChanges(subscriptions);
@@ -120,10 +120,21 @@ export function runFinancialIntelligencePipeline(rawTransactions = [], currentBa
     categoryBreakdown[sub.category] = (categoryBreakdown[sub.category] || 0) + sub.currentPrice;
   }
 
+  // Recurring classifications summary breakdown
+  const actualSubscriptions = subscriptions.filter(s => s.classification === 'SUBSCRIPTION');
+  const billsRecurring = subscriptions.filter(s => s.classification === 'BILL');
+  const commitmentsRecurring = subscriptions.filter(s => s.classification === 'COMMITMENT');
+  const otherRecurring = subscriptions.filter(s => s.classification === 'OTHER');
+
+  const monthlySubscriptionsCost = actualSubscriptions.reduce((sum, s) => sum + (s.normalizedMonthly || s.currentPrice), 0);
+
   return {
     rawCount: safeTxs.length,
     normalizedTransactions,
     subscriptions,
+    recurringPayments: subscriptions,
+    unconfirmedRepeated: subscriptions.unconfirmedRepeated || [],
+    singlePaymentMerchants: subscriptions.singlePaymentMerchants || [],
     priceChanges,
     upcomingBills,
     anomalies,
@@ -135,6 +146,11 @@ export function runFinancialIntelligencePipeline(rawTransactions = [], currentBa
       transactionCount,
       totalSubscriptionsCount: subscriptions.length,
       activeSubscriptionsCount: subscriptions.filter(s => s.isActive).length,
+      actualSubscriptionsCount: actualSubscriptions.length,
+      monthlySubscriptionsCost,
+      billsCount: billsRecurring.length,
+      commitmentsCount: commitmentsRecurring.length,
+      otherRecurringCount: otherRecurring.length,
       monthlyRecurring,
       annualCommitment,
       priceChangesCount: priceChanges.length,

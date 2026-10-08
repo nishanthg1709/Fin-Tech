@@ -422,6 +422,12 @@ export function generateSampleCSVString(count = 200) {
   rows.push([padId(txIndex++), '2026-06-15', 'CARD-ADOBE-SYSTEMS-QUARTERLY', 'Adobe Creative Cloud', 'Productivity', '4999', '0', String(runningBalance -= 4999), 'Card', 'true', '3', 'SUCCESS', 'PRODUCTION']);
   rows.push([padId(txIndex++), '2026-03-15', 'CARD-ADOBE-SYSTEMS-QUARTERLY', 'Adobe Creative Cloud', 'Productivity', '4999', '0', String(runningBalance -= 4999), 'Card', 'true', '3', 'SUCCESS', 'PRODUCTION']);
 
+  // Add Insurance older cycle (6 Months)
+  rows.push([padId(txIndex++), '2026-03-10', 'ACH-HDFC-ERGO-HEALTH-INSURANCE', 'HDFC Ergo Health Insurance', 'Insurance', '12000', '0', String(runningBalance -= 12000), 'ACH', 'true', '6', 'SUCCESS', 'PRODUCTION']);
+
+  // Add Amazon Prime older cycle (1 Year)
+  rows.push([padId(txIndex++), '2025-04-18', 'AMZN-PRIME-ANNUAL-MEMBERSHIP', 'Amazon Prime', 'Entertainment', '1499', '0', String(runningBalance -= 1499), 'Card', 'true', '12', 'SUCCESS', 'PRODUCTION']);
+
   // Add second duplicate pair for realistic anomaly review testing
   rows.push([padId(txIndex++), '2026-08-14', 'POS-STARBUCKS-BANDRA-MUMBAI', 'Starbucks', 'Food & Dining', '350', '0', String(runningBalance -= 350), 'Card', 'false', '0', 'SUCCESS', 'PRODUCTION']);
   rows.push([padId(txIndex++), '2026-08-14', 'POS-STARBUCKS-BANDRA-MUMBAI', 'Starbucks', 'Food & Dining', '350', '0', String(runningBalance -= 350), 'Card', 'false', '0', 'SUCCESS', 'PRODUCTION']);

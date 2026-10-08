@@ -20,19 +20,20 @@ export function SubscriptionTimeline({
 }) {
   const [selectedSub, setSelectedSub] = useState(null);
 
-  // Derive chronological dates for the current billing cycle (e.g. October)
+  // Derive chronological dates from actual transaction history
   const timelineNodes = React.useMemo(() => {
-    // Generate dates across the month: 08, 12, 18, 24, 31
-    const defaultDays = [8, 12, 18, 24, 31];
-    return subscriptions.slice(0, 5).map((sub, idx) => {
-      const day = defaultDays[idx] || (idx * 6 + 5);
+    return subscriptions.slice(0, 8).map((sub) => {
+      const targetDate = sub.nextEstimatedDate ? new Date(sub.nextEstimatedDate) : new Date(sub.lastBillingDate);
+      const day = isNaN(targetDate.getTime()) ? 1 : targetDate.getDate();
+      const monthNames = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+      const monthStr = isNaN(targetDate.getTime()) ? 'OCTOBER' : monthNames[targetDate.getMonth()];
       return {
         ...sub,
         timelineDay: String(day).padStart(2, '0'),
-        timelineMonth: 'OCTOBER',
+        timelineMonth: monthStr,
         priceChange: priceChanges.find(pc => pc.subscriptionId === sub.id)
       };
-    });
+    }).sort((a, b) => Number(a.timelineDay) - Number(b.timelineDay));
   }, [subscriptions, priceChanges]);
 
   const handleOpenPanel = (sub) => {

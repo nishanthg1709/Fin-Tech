@@ -54,12 +54,15 @@ export function predictUpcomingPayments(subscriptions, referenceDate = new Date(
       subscriptionId: sub.id,
       merchantName: sub.merchantName,
       category: sub.category,
+      classification: sub.classification || 'SUBSCRIPTION',
       icon: sub.icon,
       color: sub.color,
       interval: sub.interval,
       amount: sub.currentPrice,
       daysRemaining,
-      predictedDate
+      predictedDate,
+      confidenceLabel: sub.confidenceLabel || 'Likely recurring',
+      isNextDateConfident: sub.isNextDateConfident !== false
     });
   }
 

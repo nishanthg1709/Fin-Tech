@@ -146,9 +146,37 @@ export const CANONICAL_MERCHANTS = [
     defaultInterval: null
   },
   {
+    id: 'jio',
+    name: 'Jio',
+    patterns: [/reliance jio/i, /\bjio\b/i, /jio prepaid/i, /jio postpaid/i, /jio fiber/i],
+    category: 'Utilities',
+    subcategory: 'Mobile & Telecom',
+    color: '#0A2885',
+    icon: 'smartphone',
+    website: 'https://jio.com',
+    cancellationUrl: '',
+    cancellationDifficulty: 'N/A',
+    defaultInterval: '1 Month',
+    typicalPrice: 399
+  },
+  {
+    id: 'house_rent',
+    name: 'House Rent',
+    patterns: [/house rent/i, /rent payment/i, /landlord rent/i],
+    category: 'Financial Commitments',
+    subcategory: 'Housing / Rent',
+    color: '#10B981',
+    icon: 'home',
+    website: '',
+    cancellationUrl: '',
+    cancellationDifficulty: 'N/A',
+    defaultInterval: '1 Month',
+    typicalPrice: 14500
+  },
+  {
     id: 'airtel_broadband',
     name: 'Airtel Xstream Fiber',
-    patterns: [/airtel/i, /bharti airtel/i, /jio fiber/i],
+    patterns: [/airtel/i, /bharti airtel/i],
     category: 'Utilities',
     subcategory: 'Internet & Broadband',
     color: '#E40000',

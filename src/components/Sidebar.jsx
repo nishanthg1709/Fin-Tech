@@ -54,9 +54,10 @@ export function Sidebar({
       items: [
         {
           id: '/subscriptions',
-          label: 'Subscriptions',
+          label: 'Recurring Payments',
           icon: Repeat,
-          badge: summary?.activeSubscriptionsCount > 0 ? `${summary.activeSubscriptionsCount}` : null,
+          aliases: ['/recurring-payments'],
+          badge: (summary?.totalSubscriptionsCount > 0 ? `${summary.totalSubscriptionsCount}` : (summary?.activeSubscriptionsCount > 0 ? `${summary.activeSubscriptionsCount}` : null)),
           badgeColor: 'badge-emerald'
         },
         {

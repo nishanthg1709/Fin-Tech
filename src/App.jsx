@@ -100,6 +100,28 @@ export default function App() {
     }
   });
 
+  // Track recurrence overrides (e.g. user manually marking as recurring or not recurring)
+  const [recurrenceOverrides, setRecurrenceOverrides] = useState(() => {
+    try {
+      const stored = localStorage.getItem('smart_expense_recurrence_overrides');
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleRecurrenceOverrideChange = (merchantName, status) => {
+    setRecurrenceOverrides(prev => {
+      const updated = { ...prev, [merchantName]: status };
+      try {
+        localStorage.setItem('smart_expense_recurrence_overrides', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to save recurrence override:', e);
+      }
+      return updated;
+    });
+  };
+
   const handleMarkAnomalyReviewed = (anomalyId) => {
     setReviewedAnomalyIds(prev => {
       if (prev.includes(anomalyId)) return prev;
@@ -162,8 +184,8 @@ export default function App() {
 
   // Run financial intelligence pipeline
   const pipelineData = useMemo(() => {
-    return runFinancialIntelligencePipeline(rawTransactions, currentBalance);
-  }, [rawTransactions, currentBalance]);
+    return runFinancialIntelligencePipeline(rawTransactions, currentBalance, recurrenceOverrides);
+  }, [rawTransactions, currentBalance, recurrenceOverrides]);
 
   // Compute active anomalies that have not been marked as reviewed
   const activeAnomalies = useMemo(() => {
@@ -348,13 +370,19 @@ export default function App() {
             />
           )}
 
-          {/* 3. /subscriptions */}
-          {currentPath === '/subscriptions' && (
+          {/* 3. /subscriptions and alias /recurring-payments */}
+          {(currentPath === '/subscriptions' || currentPath === '/recurring-payments') && (
             <SubscriptionsView 
               subscriptions={pipelineData.subscriptions}
+              recurringPayments={pipelineData.recurringPayments || pipelineData.subscriptions}
+              unconfirmedRepeated={pipelineData.unconfirmedRepeated || []}
+              singlePaymentMerchants={pipelineData.singlePaymentMerchants || []}
               priceChanges={pipelineData.priceChanges}
               upcomingBills={pipelineData.upcomingBills}
+              summary={pipelineData.summary}
+              rawTransactions={rawTransactions}
               onNavigate={navigate}
+              onRecurrenceOverrideChange={handleRecurrenceOverrideChange}
             />
           )}
 
