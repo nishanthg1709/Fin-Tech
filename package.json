@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node test_supabase_schema.js && node test_supabase_auth.js && node test_csv_persistence.js && node test_phase2c_e2e_verification.js && node test_frontend_mvp_complete.js",
+    "test": "node test_supabase_schema.js && node test_supabase_auth.js && node test_csv_persistence.js && node test_phase2c_e2e_verification.js && node test_phase4_integration_audit.js && node test_supabase_live_diagnostics.js && node test_frontend_mvp_complete.js",
     "lint": "oxlint",
     "preview": "vite preview"
   },

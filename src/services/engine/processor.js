@@ -11,7 +11,7 @@ import { predictUpcomingPayments } from './upcomingPredictor.js';
 import { detectAnomalies } from './anomalyDetector.js';
 import { forecastCashFlow } from './cashFlowForecaster.js';
 
-export function runFinancialIntelligencePipeline(rawTransactions = [], currentBalance = 78450.0, userOverrides = {}) {
+export function runFinancialIntelligencePipeline(rawTransactions = [], currentBalance = 0, userOverrides = {}) {
   const safeTxs = Array.isArray(rawTransactions) ? rawTransactions : [];
 
   // Check if balance is provided in CSV metadata or transactions

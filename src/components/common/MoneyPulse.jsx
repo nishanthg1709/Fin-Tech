@@ -16,8 +16,8 @@ import { formatINR } from '../../utils/formatters.js';
 export function MoneyPulse({
   transactions = [],
   subscriptions = [],
-  availableBalance = 78450,
-  safeToSpend = 55889,
+  availableBalance = 0,
+  safeToSpend = 0,
   onNavigate
 }) {
   const [selectedPillar, setSelectedPillar] = useState('lifestyle'); // 'needs' | 'lifestyle' | 'savings'

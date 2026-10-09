@@ -18,7 +18,7 @@ import { FinancialRunway, EmptyState } from './common/index.js';
 
 export function CashFlowView({ 
   subscriptions = [], 
-  currentBalance = 78450.0,
+  currentBalance = 0,
   transactions = [],
   summary = null,
   onNavigate

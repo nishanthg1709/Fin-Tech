@@ -9,6 +9,7 @@ export function SignupView({ onSignup, onNavigate }) {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,6 +32,7 @@ export function SignupView({ onSignup, onNavigate }) {
 
     setIsSubmitting(true);
     setError('');
+    setSuccessMessage('');
     try {
       const res = await onSignup({
         name: name.trim(),
@@ -39,6 +41,8 @@ export function SignupView({ onSignup, onNavigate }) {
       });
       if (res && res.error) {
         setError(res.error);
+      } else if (res && res.requiresEmailConfirmation) {
+        setSuccessMessage(res.message || 'Account created! Please check your email to verify your email address before logging in.');
       }
     } catch (err) {
       setError(err?.message || 'Unable to create account. Please try again.');
@@ -93,7 +97,31 @@ export function SignupView({ onSignup, onNavigate }) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        {successMessage ? (
+          <div style={{
+            background: '#ECFDF5',
+            border: '1px solid #A7F3D0',
+            borderRadius: 'var(--radius-md)',
+            padding: '18px 16px',
+            color: '#065F46',
+            fontSize: '0.86rem',
+            marginBottom: '16px',
+            textAlign: 'center',
+            lineHeight: 1.5
+          }}>
+            <p style={{ margin: '0 0 14px 0', fontWeight: 600 }}>{successMessage}</p>
+            <button 
+              type="button" 
+              onClick={() => onNavigate('/login')}
+              className="btn btn-primary btn-sm"
+              style={{ width: '100%', height: '38px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+            >
+              <span>Go to Log In</span>
+              <ArrowRight size={14} />
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div>
             <label style={{ fontSize: '0.8rem', color: 'var(--text-main)', display: 'block', marginBottom: '6px', fontWeight: 600 }}>
               Full Name
@@ -187,6 +215,7 @@ export function SignupView({ onSignup, onNavigate }) {
             <ArrowRight size={15} />
           </button>
         </form>
+        )}
 
         <div style={{ textAlign: 'center', marginTop: '22px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           Already have an account?{' '}

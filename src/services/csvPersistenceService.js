@@ -113,11 +113,14 @@ export function formatTransactionRecord(tx, userId, accountId = null, fileName =
     ...(typeof tx.metadata === 'object' && tx.metadata !== null ? tx.metadata : {})
   };
 
+  const isValidUuid = (id) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const validatedAccountId = isValidUuid(accountId) ? accountId : null;
+
   return {
     valid: true,
     record: {
       user_id: userId,
-      account_id: accountId || null,
+      account_id: validatedAccountId,
       transaction_date: isoDate,
       amount: numAmount,
       transaction_type: txType,
@@ -251,7 +254,7 @@ export const csvPersistenceService = {
         const stored = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
         if (Array.isArray(stored)) {
           for (const tx of stored) {
-            if (!userId || tx.user_id === userId || !tx.user_id) {
+            if (tx.user_id === userId) {
               const fp = tx.metadata?.fingerprint || tx.fingerprint || generateTransactionFingerprint(tx);
               if (fp) fingerprintSet.add(fp);
             }
@@ -260,7 +263,7 @@ export const csvPersistenceService = {
       } catch {}
     } else {
       for (const tx of memoryTransactionsCache) {
-        if (!userId || tx.user_id === userId || !tx.user_id) {
+        if (tx.user_id === userId) {
           const fp = tx.metadata?.fingerprint || tx.fingerprint || generateTransactionFingerprint(tx);
           if (fp) fingerprintSet.add(fp);
         }
@@ -411,14 +414,15 @@ export const csvPersistenceService = {
     }
 
     // 6. Update local source of truth for immediate offline reactivity
+    const userScopedTxs = rawOrNormalizedTransactions.map(tx => ({ ...tx, user_id: userId }));
     if (typeof localStorage !== 'undefined') {
       try {
         const currentLocal = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
-        const mergedLocal = [...currentLocal, ...rawOrNormalizedTransactions];
+        const mergedLocal = [...currentLocal, ...userScopedTxs];
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mergedLocal));
       } catch {}
     } else {
-      memoryTransactionsCache.push(...rawOrNormalizedTransactions);
+      memoryTransactionsCache.push(...userScopedTxs);
     }
 
     const totalRows = rawOrNormalizedTransactions.length;
@@ -443,13 +447,23 @@ export const csvPersistenceService = {
    * @returns {Promise<Array>} Normalized transaction objects
    */
   async fetchUserTransactions(userId) {
-    if (!userId || !supabase) {
+    if (!userId) {
+      return [];
+    }
+
+    if (!supabase) {
       try {
         const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-        return stored ? JSON.parse(stored) : [];
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            return parsed.filter(tx => tx.user_id === userId);
+          }
+        }
       } catch {
         return [];
       }
+      return [];
     }
 
     try {
@@ -492,10 +506,15 @@ export const csvPersistenceService = {
 
     try {
       const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(tx => tx.user_id === userId);
+        }
+      }
+    } catch {}
+
+    return [];
   },
 
   /**

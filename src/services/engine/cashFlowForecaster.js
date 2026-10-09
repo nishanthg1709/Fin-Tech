@@ -19,7 +19,7 @@ const CATEGORY_COLORS = {
   'Other': '#74827B'           // Muted grey-green
 };
 
-export function forecastCashFlow(subscriptions, currentBalance = 78450.0, horizon = '30 Days') {
+export function forecastCashFlow(subscriptions, currentBalance = 0, horizon = '30 Days') {
   let horizonDays = 30;
   if (horizon === '7 Days') horizonDays = 7;
   else if (horizon === '90 Days') horizonDays = 90;

@@ -18,7 +18,7 @@ import { InsightCard, EmptyState } from './common/index.js';
 
 export function InsightsView({ 
   subscriptions = [], 
-  currentBalance = 78450.0,
+  currentBalance = 0,
   transactions = [],
   anomalies = [],
   priceChanges = [],

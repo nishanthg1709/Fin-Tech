@@ -89,7 +89,20 @@ export default function App() {
     return [];
   });
 
-  const [currentBalance, setCurrentBalance] = useState(78450.0);
+  // Dynamic current balance calculation derived strictly from active transactions or statement metadata
+  const currentBalance = useMemo(() => {
+    if (!rawTransactions || rawTransactions.length === 0) return 0;
+    if (activeSourceInfo?.latestBalance !== undefined && activeSourceInfo?.latestBalance !== null && !isNaN(activeSourceInfo.latestBalance)) {
+      return Number(activeSourceInfo.latestBalance);
+    }
+    const txWithBalance = rawTransactions.slice().reverse().find(t => t.balance !== null && t.balance !== undefined && !isNaN(t.balance));
+    if (txWithBalance) return Number(txWithBalance.balance);
+    const credits = rawTransactions.filter(t => t.type === 'CREDIT' || t.type === 'income' || t.canonical_type === 'income');
+    const debits = rawTransactions.filter(t => (t.type === 'DEBIT' || t.type === 'expense' || t.canonical_type === 'expense' || t.type !== 'transfer') && t.type !== 'transfer');
+    const net = credits.reduce((s, t) => s + (Number(t.amount) || 0), 0) - debits.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    return Math.max(0, net);
+  }, [rawTransactions, activeSourceInfo]);
+
   const [globalToast, setGlobalToast] = useState(null);
 
   // Track reviewed/resolved anomaly alert IDs in state and localStorage
@@ -228,12 +241,31 @@ export default function App() {
 
           // Refresh remote transactions from Supabase
           const remoteTxs = await csvPersistenceService.fetchUserTransactions(session.user.id);
-          if (Array.isArray(remoteTxs) && remoteTxs.length > 0 && isMounted) {
-            setRawTransactions(remoteTxs);
-            try {
-              localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
-            } catch {}
+          if (isMounted) {
+            if (Array.isArray(remoteTxs) && remoteTxs.length > 0) {
+              setRawTransactions(remoteTxs);
+              try {
+                localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
+              } catch {}
+            } else {
+              setRawTransactions([]);
+              setActiveSourceInfo(null);
+              try {
+                localStorage.removeItem('smart_expense_active_transactions');
+                localStorage.removeItem('smart_expense_active_source');
+              } catch {}
+            }
           }
+        } else if (authService.isConfigured() && isMounted) {
+          // If Supabase is active but no valid session exists, clear any stale user
+          setUser(null);
+          setRawTransactions([]);
+          setActiveSourceInfo(null);
+          try {
+            localStorage.removeItem('smart_expense_user');
+            localStorage.removeItem('smart_expense_active_transactions');
+            localStorage.removeItem('smart_expense_active_source');
+          } catch {}
         }
       } catch (err) {
         console.warn('Session initialization note:', err);
@@ -258,18 +290,32 @@ export default function App() {
         } catch {}
 
         const remoteTxs = await csvPersistenceService.fetchUserTransactions(session.user.id);
-        if (Array.isArray(remoteTxs) && remoteTxs.length > 0 && isMounted) {
-          setRawTransactions(remoteTxs);
-          try {
-            localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
-          } catch {}
+        if (isMounted) {
+          if (Array.isArray(remoteTxs) && remoteTxs.length > 0) {
+            setRawTransactions(remoteTxs);
+            try {
+              localStorage.setItem('smart_expense_active_transactions', JSON.stringify(remoteTxs));
+            } catch {}
+          } else {
+            setRawTransactions([]);
+            setActiveSourceInfo(null);
+            try {
+              localStorage.removeItem('smart_expense_active_transactions');
+              localStorage.removeItem('smart_expense_active_source');
+            } catch {}
+          }
         }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setRawTransactions([]);
+        setActiveSourceInfo(null);
+        setConnectedBank(null);
+        csvPersistenceService.clearMemoryCache();
         try {
           localStorage.removeItem('smart_expense_user');
           localStorage.removeItem('smart_expense_active_transactions');
+          localStorage.removeItem('smart_expense_active_source');
+          localStorage.removeItem('smart_expense_bank');
         } catch {}
       }
     });
@@ -329,6 +375,14 @@ export default function App() {
       return { error: result.error };
     }
 
+    // If email confirmation is required, session is not yet active
+    if (!result.session) {
+      return {
+        requiresEmailConfirmation: true,
+        message: 'Account created! Please check your email to verify your email address before logging in.'
+      };
+    }
+
     const authUser = result.user;
     const newUser = {
       id: authUser?.id || null,
@@ -351,9 +405,14 @@ export default function App() {
     localStorage.removeItem('smart_expense_reviewed_anomalies');
     localStorage.removeItem('smart_expense_active_transactions');
     localStorage.removeItem('smart_expense_active_source');
+    localStorage.removeItem('smart_expense_bank');
+    localStorage.removeItem('smart_expense_reviewed_txs');
+    localStorage.removeItem('smart_expense_recurrence_overrides');
+    csvPersistenceService.clearMemoryCache();
     setReviewedAnomalyIds([]);
     setActiveSourceInfo(null);
     setRawTransactions([]);
+    setConnectedBank(null);
     setUser(null);
     navigate('/');
   };

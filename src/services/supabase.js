@@ -49,16 +49,19 @@ export function mapAuthError(err, mode = 'login') {
   if (msg.includes('email not confirmed') || msg.includes('not verified')) {
     return 'Please verify your email address before logging in.';
   }
-  if (msg.includes('rate limit') || msg.includes('security purposes')) {
-    return 'Too many attempts. Please wait a moment and try again.';
+  if (msg.includes('rate limit') || msg.includes('security purposes') || msg.includes('over_email_send_rate_limit')) {
+    return 'Email rate limit reached. Please wait a moment and try again.';
   }
-  if (msg.includes('invalid format') || msg.includes('invalid email') || msg.includes('valid email')) {
+  if (msg.includes('invalid format') || msg.includes('invalid email') || msg.includes('valid email') || msg.includes('unable to validate email')) {
     return 'Please enter a valid email address.';
+  }
+  if (msg.includes('signups not allowed') || msg.includes('signups are disabled')) {
+    return 'Signups are currently disabled in project settings.';
   }
 
   return mode === 'login'
     ? 'Invalid email or password'
-    : 'Unable to create account. Please try again.';
+    : (err.message || 'Unable to create account. Please try again.');
 }
 
 /**
@@ -217,7 +220,20 @@ export const authService = {
       });
 
       if (error) {
-        return { success: false, error: mapAuthError(error, 'signup') };
+        console.warn('Supabase Auth signUp error:', {
+          status: error.status,
+          message: error.message,
+          code: error.code
+        });
+        return { 
+          success: false, 
+          error: mapAuthError(error, 'signup'),
+          details: {
+            message: error.message,
+            status: error.status,
+            code: error.code
+          }
+        };
       }
 
       // Check for existing user where Supabase returned empty identities array
@@ -225,13 +241,13 @@ export const authService = {
         return { success: false, error: 'An account with this email already exists' };
       }
 
-      // Create profile record for the authenticated user
+      // Create profile record for the authenticated user if session is active
       let profile = null;
-      if (data?.user) {
+      if (data?.session?.user) {
         profile = await profileService.createProfile({
-          userId: data.user.id,
+          userId: data.session.user.id,
           fullName: fullName?.trim() || '',
-          email: data.user.email
+          email: data.session.user.email
         });
       }
 
@@ -242,6 +258,7 @@ export const authService = {
         profile
       };
     } catch (err) {
+      console.warn('Supabase Auth signUp exception:', err);
       return { success: false, error: mapAuthError(err, 'signup') };
     }
   },

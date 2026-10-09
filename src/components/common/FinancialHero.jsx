@@ -18,14 +18,14 @@ import { formatINR } from '../../utils/formatters.js';
 
 export function FinancialHero({
   userName = 'there',
-  availableBalance = 78450,
-  monthlyIncome = 75000,
-  monthlySpending = 45365,
-  monthlySavings = 29635,
-  savingsRate = 39,
-  safeToSpendTotal = 55889,
-  runwayDays = 47,
-  upcomingBillsCount = 4,
+  availableBalance = 0,
+  monthlyIncome = 0,
+  monthlySpending = 0,
+  monthlySavings = 0,
+  savingsRate = 0,
+  safeToSpendTotal = 0,
+  runwayDays = 0,
+  upcomingBillsCount = 0,
   comparison = null,
   periodLabel = null,
   onNavigate

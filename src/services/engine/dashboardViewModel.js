@@ -148,7 +148,7 @@ export function getDashboardViewModel(pipelineData, activeSourceInfo = null, opt
   // 2. PRIMARY HERO FINANCIAL METRICS
   const availableBalance = summary.currentBalance !== undefined && summary.currentBalance !== null 
     ? summary.currentBalance 
-    : 78450.0;
+    : 0;
 
   // Check if latest month is a complete month or partial (e.g. statement ends on day 2)
   const currentMonthDebitCount = currentMonthData.transactions.filter(
@@ -162,19 +162,21 @@ export function getDashboardViewModel(pipelineData, activeSourceInfo = null, opt
 
   const monthlyIncome = representativeMonth.income > 0 
     ? representativeMonth.income 
-    : (summary.totalIncome || 75000);
+    : (summary.totalIncome || 0);
 
   const monthlySpending = representativeMonth.spending > 0 
     ? representativeMonth.spending 
-    : (summary.totalSpending || 45365);
+    : (summary.totalSpending || 0);
 
   const monthlySavings = Math.max(0, monthlyIncome - monthlySpending);
   const savingsRate = monthlyIncome > 0 ? Math.round((monthlySavings / monthlyIncome) * 100) : 0;
 
   // Safe to Spend
-  const safeToSpendTotal = summary.safeToSpend || Math.max(0, availableBalance - (summary.monthlyRecurring || 12000));
+  const safeToSpendTotal = summary.safeToSpend !== undefined && summary.safeToSpend !== null
+    ? summary.safeToSpend
+    : Math.max(0, availableBalance - (summary.monthlyRecurring || 0));
   const safeToSpendDaily = Math.round(safeToSpendTotal / 30);
-  const runwayDays = monthlySpending > 0 ? Math.min(180, Math.round((availableBalance / (monthlySpending / 30)))) : 45;
+  const runwayDays = monthlySpending > 0 ? Math.min(180, Math.round((availableBalance / (monthlySpending / 30)))) : 0;
 
   // Comparison vs previous period
   let comparison = null;

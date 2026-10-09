@@ -14,7 +14,7 @@ import { forecastCashFlow } from '../../services/engine/cashFlowForecaster.js';
 
 export function FinancialRunway({
   subscriptions = [],
-  currentBalance = 78450.0
+  currentBalance = 0
 }) {
   const [selectedHorizon, setSelectedHorizon] = useState('30 Days');
   const [hoveredPointIndex, setHoveredPointIndex] = useState(null);
